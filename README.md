@@ -43,20 +43,14 @@ If you use Claude Code through WSL, that is supported too. The monitor can read 
 
 ## Install
 
-Install the latest version from WinGet:
-
-```powershell
-winget install CodeZeno.ClaudeCodeUsageMonitor
-```
-
-If you prefer not to use WinGet, you can still download the latest `claude-code-usage-monitor.exe` from the [Releases](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/releases) page and run it directly.
+Download the latest `codex-usage-taskbar-monitor.exe` from the [Releases](https://github.com/LiarCoder/codex-usage-taskbar-monitor/releases) page and place it in a user-writable folder. This portable installation updates itself from this repository's GitHub Releases.
 
 ## Use
 
-After installing with WinGet, run:
+Run:
 
 ```powershell
-claude-code-usage-monitor
+codex-usage-taskbar-monitor
 ```
 
 Once running, it will appear in your taskbar and as one or more tray icons in the notification area.
@@ -98,19 +92,19 @@ Hovering over a tray icon shows the usage values for that model.
 If you need to troubleshoot startup or visibility issues, run:
 
 ```powershell
-claude-code-usage-monitor --diagnose
+codex-usage-taskbar-monitor --diagnose
 ```
 
 This writes a log file to:
 
 ```text
-%TEMP%\claude-code-usage-monitor.log
+%TEMP%\codex-usage-taskbar-monitor.log
 ```
 
 Settings are saved to:
 
 ```text
-%APPDATA%\ClaudeCodeUsageMonitor\settings.json
+%APPDATA%\CodexUsageTaskbarMonitor\settings.json
 ```
 
 ## Account Support
