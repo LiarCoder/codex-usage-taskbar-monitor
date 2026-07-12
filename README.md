@@ -24,7 +24,7 @@ codex-usage-taskbar-monitor
 
 The taskbar Widget and its tray icon show Codex usage. Drag the Widget's left divider to adjust its position or move it to another taskbar. Left-click the tray icon to show or hide the Widget.
 
-The right-click menu retains update frequency, usage-display mode, startup, position reset, language, update checks, and other application settings. Provider selection is intentionally omitted because Codex is always enabled. Choose **Used** or **Remaining** to control the percentages shown in the bars, badge, and tooltip.
+The right-click menu retains update frequency, usage-display mode, startup, position reset, compact mode, language, update checks, and other application settings. Compact Mode hides the percentage bars and shows only usage text to save taskbar space. Provider selection is intentionally omitted because Codex is always enabled. Choose **Used** or **Remaining** to control the percentages shown in the bars, badge, and tooltip.
 
 ## Diagnostics
 

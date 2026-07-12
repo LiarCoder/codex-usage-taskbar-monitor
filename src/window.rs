@@ -92,6 +92,7 @@ struct AppState {
     drag_start_offset: i32,
 
     widget_visible: bool,
+    compact_mode: bool,
 }
 
 impl AppState {
@@ -164,6 +165,7 @@ const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_RESET_POSITION: u16 = 30;
 const IDM_VERSION_ACTION: u16 = 31;
+const IDM_COMPACT_MODE: u16 = 32;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
 const IDM_LANG_DUTCH: u16 = 42;
@@ -356,6 +358,8 @@ struct SettingsFile {
     last_update_check_unix: Option<u64>,
     #[serde(default = "default_widget_visible")]
     widget_visible: bool,
+    #[serde(default)]
+    compact_mode: bool,
     #[serde(skip, default = "default_show_primary_code")]
     show_primary_code: bool,
     #[serde(skip, default = "default_show_codex")]
@@ -375,6 +379,7 @@ impl Default for SettingsFile {
             language: None,
             last_update_check_unix: None,
             widget_visible: true,
+            compact_mode: false,
             show_primary_code: false,
             show_codex: true,
             show_secondary: false,
@@ -437,6 +442,7 @@ fn save_state_settings() {
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
             widget_visible: s.widget_visible,
+            compact_mode: s.compact_mode,
             show_primary_code: s.show_primary_code,
             show_codex: s.show_codex,
             show_secondary: s.show_secondary,
@@ -1157,11 +1163,9 @@ fn row_bar_segment_count(active_models: i32) -> i32 {
     }
 }
 
-fn total_widget_width_for(active_models: i32) -> i32 {
+fn total_widget_width_for(active_models: i32, compact_mode: bool) -> i32 {
     let bar_segments = row_bar_segment_count(active_models);
-    let model_width = (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * bar_segments - sc(SEGMENT_GAP)
-        + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH);
+    let model_width = model_usage_width(bar_segments, compact_mode);
 
     sc(LEFT_DIVIDER_W)
         + sc(DIVIDER_RIGHT_MARGIN)
@@ -1173,22 +1177,30 @@ fn total_widget_width_for(active_models: i32) -> i32 {
 }
 
 fn total_widget_width_for_state(state: &AppState) -> i32 {
-    total_widget_width_for(active_model_count(
-        state.show_primary_code,
-        state.show_codex,
-        state.show_secondary,
-    ))
+    total_widget_width_for(
+        active_model_count(
+            state.show_primary_code,
+            state.show_codex,
+            state.show_secondary,
+        ),
+        state.compact_mode,
+    )
 }
 
 fn total_widget_width() -> i32 {
-    let active_models = {
+    let (active_models, compact_mode) = {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| active_model_count(s.show_primary_code, s.show_codex, s.show_secondary))
-            .unwrap_or(1)
+            .map(|s| {
+                (
+                    active_model_count(s.show_primary_code, s.show_codex, s.show_secondary),
+                    s.compact_mode,
+                )
+            })
+            .unwrap_or((1, false))
     };
-    total_widget_width_for(active_models)
+    total_widget_width_for(active_models, compact_mode)
 }
 
 fn primary_accent_color() -> Color {
@@ -1318,7 +1330,7 @@ pub fn run() {
             WS_POPUP,
             0,
             0,
-            total_widget_width_for(initial_model_count),
+            total_widget_width_for(initial_model_count, settings.compact_mode),
             sc(WIDGET_HEIGHT),
             HWND::default(),
             HMENU::default(),
@@ -1394,6 +1406,7 @@ pub fn run() {
                 drag_start_client_x: 0,
                 drag_start_offset: 0,
                 widget_visible: settings.widget_visible,
+                compact_mode: settings.compact_mode,
             });
         }
 
@@ -1502,6 +1515,7 @@ fn render_layered() {
         show_primary_code,
         show_codex,
         show_secondary,
+        compact_mode,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1528,6 +1542,7 @@ fn render_layered() {
                 s.show_primary_code,
                 s.show_codex,
                 s.show_secondary,
+                s.compact_mode,
             ),
             None => return,
         }
@@ -1623,6 +1638,7 @@ fn render_layered() {
             show_primary_code,
             show_codex,
             show_secondary,
+            compact_mode,
             &codex_accent,
             &secondary_accent,
         );
@@ -1699,6 +1715,7 @@ fn paint_content(
     show_primary_code: bool,
     show_codex: bool,
     show_secondary: bool,
+    compact_mode: bool,
     codex_accent: &Color,
     secondary_accent: &Color,
 ) {
@@ -1793,6 +1810,7 @@ fn paint_content(
             show_primary_code,
             show_codex,
             show_secondary,
+            compact_mode,
             accent,
             codex_accent,
             secondary_accent,
@@ -1814,6 +1832,7 @@ fn paint_content(
             show_primary_code,
             show_codex,
             show_secondary,
+            compact_mode,
             accent,
             codex_accent,
             secondary_accent,
@@ -2643,6 +2662,17 @@ unsafe extern "system" fn wnd_proc(
                     save_state_settings();
                     position_at_taskbar();
                 }
+                IDM_COMPACT_MODE => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.compact_mode = !s.compact_mode;
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
                 }
@@ -2759,6 +2789,7 @@ fn show_context_menu(hwnd: HWND) {
             install_channel,
             update_status,
             widget_visible,
+            compact_mode,
             usage_display,
         ) = {
             let state = lock_state();
@@ -2771,6 +2802,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.install_channel,
                     s.update_status.clone(),
                     s.widget_visible,
+                    s.compact_mode,
                     s.usage_display,
                 ),
                 None => (
@@ -2781,6 +2813,7 @@ fn show_context_menu(hwnd: HWND) {
                     InstallChannel::Portable,
                     UpdateStatus::Idle,
                     true,
+                    false,
                     UsageDisplayMode::Used,
                 ),
             }
@@ -2873,6 +2906,19 @@ fn show_context_menu(hwnd: HWND) {
             MENU_ITEM_FLAGS(0),
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
+        );
+
+        let compact_mode_str = native_interop::wide_str(strings.compact_mode);
+        let compact_mode_flags = if compact_mode {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            settings_menu,
+            compact_mode_flags,
+            IDM_COMPACT_MODE as usize,
+            PCWSTR::from_raw(compact_mode_str.as_ptr()),
         );
 
         let language_menu = CreatePopupMenu().unwrap();
@@ -3017,6 +3063,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         show_primary_code,
         show_codex,
         show_secondary,
+        compact_mode,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -3041,6 +3088,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.show_primary_code,
                 s.show_codex,
                 s.show_secondary,
+                s.compact_mode,
             ),
             None => return,
         }
@@ -3104,6 +3152,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             show_primary_code,
             show_codex,
             show_secondary,
+            compact_mode,
             &codex_accent,
             &secondary_accent,
         );
@@ -3132,6 +3181,7 @@ fn draw_row(
     show_primary_code: bool,
     show_codex: bool,
     show_secondary: bool,
+    compact_mode: bool,
     primary_accent: &Color,
     codex_accent: &Color,
     secondary_accent: &Color,
@@ -3185,8 +3235,9 @@ fn draw_row(
                 primary_accent,
                 track,
                 &primary_value_color,
+                compact_mode,
             );
-            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+            model_x += model_usage_width(segment_count, compact_mode) + sc(MODEL_RIGHT_MARGIN);
         }
         if show_codex {
             draw_usage_bar(
@@ -3199,8 +3250,9 @@ fn draw_row(
                 codex_accent,
                 track,
                 &codex_value_color,
+                compact_mode,
             );
-            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+            model_x += model_usage_width(segment_count, compact_mode) + sc(MODEL_RIGHT_MARGIN);
         }
         if show_secondary {
             draw_usage_bar(
@@ -3213,15 +3265,20 @@ fn draw_row(
                 secondary_accent,
                 track,
                 &secondary_value_color,
+                compact_mode,
             );
         }
     }
 }
 
-fn model_usage_width(segment_count: i32) -> i32 {
-    (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
-        + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH)
+fn model_usage_width(segment_count: i32, compact_mode: bool) -> i32 {
+    if compact_mode {
+        sc(TEXT_WIDTH)
+    } else {
+        (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
+            + sc(BAR_RIGHT_MARGIN)
+            + sc(TEXT_WIDTH)
+    }
 }
 
 fn draw_usage_bar(
@@ -3234,6 +3291,7 @@ fn draw_usage_bar(
     accent: &Color,
     track: &Color,
     text_color: &Color,
+    compact_mode: bool,
 ) {
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -3241,55 +3299,61 @@ fn draw_usage_bar(
     let corner_r = sc(CORNER_RADIUS);
 
     unsafe {
-        let percent_clamped = percent.clamp(0.0, 100.0);
-        let segment_percent = 100.0 / segment_count as f64;
+        if !compact_mode {
+            let percent_clamped = percent.clamp(0.0, 100.0);
+            let segment_percent = 100.0 / segment_count as f64;
 
-        for i in 0..segment_count {
-            let seg_x = bar_x + i * (seg_w + seg_gap);
-            let seg_start = (i as f64) * segment_percent;
-            let seg_end = seg_start + segment_percent;
+            for i in 0..segment_count {
+                let seg_x = bar_x + i * (seg_w + seg_gap);
+                let seg_start = (i as f64) * segment_percent;
+                let seg_end = seg_start + segment_percent;
 
-            let seg_rect = RECT {
-                left: seg_x,
-                top: y,
-                right: seg_x + seg_w,
-                bottom: y + seg_h,
-            };
+                let seg_rect = RECT {
+                    left: seg_x,
+                    top: y,
+                    right: seg_x + seg_w,
+                    bottom: y + seg_h,
+                };
 
-            if percent_clamped >= seg_end {
-                draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
-            } else if percent_clamped <= seg_start {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-            } else {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-                let fraction = (percent_clamped - seg_start) / segment_percent;
-                let fill_width = (seg_w as f64 * fraction) as i32;
-                if fill_width > 0 {
-                    let fill_rect = RECT {
-                        left: seg_x,
-                        top: y,
-                        right: seg_x + fill_width,
-                        bottom: y + seg_h,
-                    };
-                    let rgn = CreateRoundRectRgn(
-                        seg_rect.left,
-                        seg_rect.top,
-                        seg_rect.right + 1,
-                        seg_rect.bottom + 1,
-                        corner_r * 2,
-                        corner_r * 2,
-                    );
-                    let _ = SelectClipRgn(hdc, rgn);
-                    let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
-                    FillRect(hdc, &fill_rect, brush);
-                    let _ = DeleteObject(brush);
-                    let _ = SelectClipRgn(hdc, HRGN::default());
-                    let _ = DeleteObject(rgn);
+                if percent_clamped >= seg_end {
+                    draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
+                } else if percent_clamped <= seg_start {
+                    draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+                } else {
+                    draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+                    let fraction = (percent_clamped - seg_start) / segment_percent;
+                    let fill_width = (seg_w as f64 * fraction) as i32;
+                    if fill_width > 0 {
+                        let fill_rect = RECT {
+                            left: seg_x,
+                            top: y,
+                            right: seg_x + fill_width,
+                            bottom: y + seg_h,
+                        };
+                        let rgn = CreateRoundRectRgn(
+                            seg_rect.left,
+                            seg_rect.top,
+                            seg_rect.right + 1,
+                            seg_rect.bottom + 1,
+                            corner_r * 2,
+                            corner_r * 2,
+                        );
+                        let _ = SelectClipRgn(hdc, rgn);
+                        let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
+                        FillRect(hdc, &fill_rect, brush);
+                        let _ = DeleteObject(brush);
+                        let _ = SelectClipRgn(hdc, HRGN::default());
+                        let _ = DeleteObject(rgn);
+                    }
                 }
             }
         }
 
-        let text_x = bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN);
+        let text_x = if compact_mode {
+            bar_x
+        } else {
+            bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN)
+        };
         let mut text_wide: Vec<u16> = text.encode_utf16().collect();
         let mut text_rect = RECT {
             left: text_x,
