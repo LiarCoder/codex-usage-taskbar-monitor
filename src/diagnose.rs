@@ -27,10 +27,6 @@ pub fn init() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub fn is_enabled() -> bool {
-    DIAGNOSE_STATE.get().is_some()
-}
-
 pub fn log(message: impl AsRef<str>) {
     let Some(state) = DIAGNOSE_STATE.get() else {
         return;
