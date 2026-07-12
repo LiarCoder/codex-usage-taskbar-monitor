@@ -65,14 +65,12 @@ pub fn poll(
     if !show_codex {
         return Err(PollError::RequestFailed);
     }
-    let mut result = AppUsageData::default();
     let usage = poll_codex()?;
     diagnose::log(format!(
         "Codex usage poll succeeded: session={:.1}% weekly={:.1}%",
         usage.session.percentage, usage.weekly.percentage
     ));
-    result.codex = Some(usage);
-    Ok(result)
+    Ok(usage)
 }
 
 fn poll_codex() -> Result<UsageData, PollError> {
@@ -328,7 +326,7 @@ pub fn is_past_reset(data: &UsageData) -> bool {
 }
 
 pub fn app_is_past_reset(data: &AppUsageData) -> bool {
-    data.codex.as_ref().is_some_and(is_past_reset)
+    is_past_reset(data)
 }
 
 #[cfg(test)]

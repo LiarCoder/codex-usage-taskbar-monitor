@@ -101,31 +101,24 @@ impl AppState {
     }
 
     fn primary_code_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.primary_code.as_ref())
-            .is_some()
+        // primary_code is no longer populated by the poller; treated as
+        // permanently unavailable so the corresponding fields stay hidden.
+        false
     }
 
     fn codex_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.codex.as_ref())
-            .is_some()
+        // Codex is the only supported provider, so the data field is the
+        // Codex payload itself (via the `AppUsageData = UsageData` alias).
+        self.data.is_some()
     }
 
     fn secondary_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.secondary.as_ref())
-            .is_some()
+        // secondary is no longer populated by the poller.
+        false
     }
 
     fn secondary_weekly_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.secondary.as_ref())
-            .is_some_and(|usage| usage.weekly.resets_at.is_some() || usage.weekly.percentage != 0.0)
+        false
     }
 }
 
@@ -714,37 +707,13 @@ fn refresh_usage_texts(state: &mut AppState) {
         return;
     };
 
-    if let Some(primary_code) = data.primary_code.as_ref() {
-        state.session_text =
-            poller::format_line(&primary_code.session, strings, state.usage_display);
-        state.weekly_text = poller::format_line(&primary_code.weekly, strings, state.usage_display);
-    } else if state.show_primary_code {
-        state.session_text = "!".to_string();
-        state.weekly_text = "!".to_string();
-    }
-
-    if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text =
-            poller::format_line(&codex.session, strings, state.usage_display);
-        state.codex_weekly_text = poller::format_line(&codex.weekly, strings, state.usage_display);
-    } else if state.show_codex {
-        state.codex_session_text = "!".to_string();
-        state.codex_weekly_text = "!".to_string();
-    }
-
-    if let Some(secondary) = data.secondary.as_ref() {
-        state.secondary_session_text =
-            poller::format_line(&secondary.session, strings, state.usage_display);
-        state.secondary_weekly_text =
-            if secondary.weekly.resets_at.is_none() && secondary.weekly.percentage == 0.0 {
-                "--".to_string()
-            } else {
-                poller::format_line(&secondary.weekly, strings, state.usage_display)
-            };
-    } else if state.show_secondary {
-        state.secondary_session_text = "!".to_string();
-        state.secondary_weekly_text = "!".to_string();
-    }
+    // Codex is the only supported provider, so the `data` value itself
+    // is the Codex payload. The legacy `primary_code` / `secondary` slots
+    // are no longer populated by the poller and have nothing to render.
+    state.codex_session_text =
+        poller::format_line(&data.session, strings, state.usage_display);
+    state.codex_weekly_text =
+        poller::format_line(&data.weekly, strings, state.usage_display);
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1859,27 +1828,12 @@ fn do_poll(send_hwnd: SendHwnd) {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
-                if let Some(primary_code) = data.primary_code.as_ref() {
-                    s.session_percent = primary_code.session.percentage;
-                    s.weekly_percent = primary_code.weekly.percentage;
-                } else if s.show_primary_code {
-                    s.session_percent = 0.0;
-                    s.weekly_percent = 0.0;
-                }
-                if let Some(codex) = data.codex.as_ref() {
-                    s.codex_session_percent = codex.session.percentage;
-                    s.codex_weekly_percent = codex.weekly.percentage;
-                } else if s.show_codex {
-                    s.codex_session_percent = 0.0;
-                    s.codex_weekly_percent = 0.0;
-                }
-                if let Some(secondary) = data.secondary.as_ref() {
-                    s.secondary_session_percent = secondary.session.percentage;
-                    s.secondary_weekly_percent = secondary.weekly.percentage;
-                } else if s.show_secondary {
-                    s.secondary_session_percent = 0.0;
-                    s.secondary_weekly_percent = 0.0;
-                }
+                // The poller now returns the Codex `UsageData` directly via
+                // the `AppUsageData` type alias, so the data field is the
+                // Codex payload itself. The legacy `primary_code` and
+                // `secondary` slots are no longer populated.
+                s.codex_session_percent = data.session.percentage;
+                s.codex_weekly_percent = data.weekly.percentage;
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
                     unsafe {
@@ -2055,24 +2009,8 @@ fn schedule_countdown_timer() {
     }
 
     let delays = [
-        data.primary_code
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
-        data.primary_code
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
-        data.codex
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
-        data.codex
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
-        data.secondary
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
-        data.secondary
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+        poller::time_until_display_change(data.session.resets_at),
+        poller::time_until_display_change(data.weekly.resets_at),
     ];
     let min_delay = delays.into_iter().flatten().min();
 
