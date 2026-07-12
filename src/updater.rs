@@ -173,13 +173,24 @@ fn fetch_latest_release() -> Result<Option<ReleaseDescriptor>, String> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
     let agent = build_agent()?;
 
-    let response = agent
+    let response = match agent
         .get(&url)
         .set("Accept", GITHUB_API_ACCEPT)
         .set("User-Agent", user_agent())
         .set("X-GitHub-Api-Version", GITHUB_API_VERSION)
         .call()
-        .map_err(|e| format!("Unable to check GitHub releases: {e}"))?;
+    {
+        Ok(response) => response,
+        Err(ureq::Error::Status(403 | 429, response)) => {
+            return fetch_latest_release_from_redirect(owner, repo).map_err(|fallback_error| {
+                format!(
+                    "Unable to check GitHub releases via API: status code {}. Fallback check failed: {fallback_error}",
+                    response.status()
+                )
+            });
+        }
+        Err(error) => return Err(format!("Unable to check GitHub releases: {error}")),
+    };
 
     let release: GitHubRelease = response
         .into_json()
@@ -210,13 +221,61 @@ fn fetch_latest_release() -> Result<Option<ReleaseDescriptor>, String> {
     }))
 }
 
+fn fetch_latest_release_from_redirect(
+    owner: &str,
+    repo: &str,
+) -> Result<Option<ReleaseDescriptor>, String> {
+    let url = format!("https://github.com/{owner}/{repo}/releases/latest");
+    let agent = build_agent_without_redirects()?;
+    let response = agent
+        .head(&url)
+        .set("User-Agent", user_agent())
+        .call()
+        .map_err(|e| format!("Unable to check GitHub latest release redirect: {e}"))?;
+
+    if !(300..400).contains(&response.status()) {
+        return Err(format!(
+            "GitHub latest release redirect returned unexpected status code {}",
+            response.status()
+        ));
+    }
+
+    let location = response.header("Location").ok_or_else(|| {
+        "GitHub latest release redirect did not include a Location header".to_string()
+    })?;
+    let tag = release_tag_from_latest_location(location).ok_or_else(|| {
+        format!("GitHub latest release redirect did not point to a release tag: {location}")
+    })?;
+    let latest_version = tag.trim_start_matches('v').to_string();
+    if !is_version_newer(&latest_version, env!("CARGO_PKG_VERSION")) {
+        return Ok(None);
+    }
+
+    Ok(Some(ReleaseDescriptor {
+        latest_version,
+        asset_url: github_release_asset_url(owner, repo, tag),
+    }))
+}
+
 fn build_agent() -> Result<ureq::Agent, String> {
+    build_agent_with_redirects(None)
+}
+
+fn build_agent_without_redirects() -> Result<ureq::Agent, String> {
+    build_agent_with_redirects(Some(0))
+}
+
+fn build_agent_with_redirects(redirects: Option<u32>) -> Result<ureq::Agent, String> {
     let tls = native_tls::TlsConnector::new()
         .map_err(|e| format!("Unable to initialize TLS support for update checks: {e}"))?;
-    Ok(ureq::AgentBuilder::new()
+    let mut builder = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
-        .tls_connector(std::sync::Arc::new(tls))
-        .build())
+        .tls_connector(std::sync::Arc::new(tls));
+    if let Some(redirects) = redirects {
+        builder = builder.redirects(redirects);
+    }
+
+    Ok(builder.build())
 }
 
 fn download_release_asset(url: &str, partial_path: &Path, final_path: &Path) -> Result<(), String> {
@@ -424,6 +483,25 @@ fn user_agent() -> &'static str {
     concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"))
 }
 
+fn release_tag_from_latest_location(location: &str) -> Option<&str> {
+    let (_, rest) = location.split_once("/releases/tag/")?;
+    let tag = rest
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_matches('/');
+
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag)
+    }
+}
+
+fn github_release_asset_url(owner: &str, repo: &str, tag: &str) -> String {
+    format!("https://github.com/{owner}/{repo}/releases/download/{tag}/{RELEASE_ASSET_NAME}")
+}
+
 fn is_winget_install_path(path: &Path) -> bool {
     let normalized_path = normalize_path(path);
     winget_install_roots()
@@ -507,4 +585,37 @@ fn show_error_message(title: &str, message: &str) {
 
 fn wide_str(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_release_tag_from_github_latest_redirect() {
+        assert_eq!(
+            release_tag_from_latest_location(
+                "https://github.com/LiarCoder/codex-usage-taskbar-monitor/releases/tag/v1.4.10"
+            ),
+            Some("v1.4.10")
+        );
+        assert_eq!(
+            release_tag_from_latest_location(
+                "/LiarCoder/codex-usage-taskbar-monitor/releases/tag/v1.4.10?expanded=true"
+            ),
+            Some("v1.4.10")
+        );
+        assert_eq!(
+            release_tag_from_latest_location("https://github.com/LiarCoder/repo/releases"),
+            None
+        );
+    }
+
+    #[test]
+    fn builds_github_release_asset_url_from_tag() {
+        assert_eq!(
+            github_release_asset_url("LiarCoder", "codex-usage-taskbar-monitor", "v1.4.10"),
+            "https://github.com/LiarCoder/codex-usage-taskbar-monitor/releases/download/v1.4.10/codex-usage-taskbar-monitor.exe"
+        );
+    }
 }
