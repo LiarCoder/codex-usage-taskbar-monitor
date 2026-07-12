@@ -2820,12 +2820,6 @@ fn show_context_menu(hwnd: HWND) {
         }
 
         let freq_label = native_interop::wide_str(strings.update_frequency);
-        let _ = AppendMenuW(
-            menu,
-            MF_POPUP,
-            freq_menu.0 as usize,
-            PCWSTR::from_raw(freq_label.as_ptr()),
-        );
 
         // Usage display submenu
         let usage_display_menu = CreatePopupMenu().unwrap();
@@ -2856,12 +2850,6 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         let usage_display_label = native_interop::wide_str(strings.usage_display);
-        let _ = AppendMenuW(
-            menu,
-            MF_POPUP,
-            usage_display_menu.0 as usize,
-            PCWSTR::from_raw(usage_display_label.as_ptr()),
-        );
 
         // Settings submenu
         let settings_menu = CreatePopupMenu().unwrap();
@@ -2934,6 +2922,20 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             language_menu.0 as usize,
             PCWSTR::from_raw(language_label.as_ptr()),
+        );
+
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            freq_menu.0 as usize,
+            PCWSTR::from_raw(freq_label.as_ptr()),
+        );
+
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            usage_display_menu.0 as usize,
+            PCWSTR::from_raw(usage_display_label.as_ptr()),
         );
 
         let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
