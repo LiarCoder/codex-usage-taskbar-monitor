@@ -151,6 +151,7 @@ pub struct Strings {
     pub remaining_usage: &'static str,
     pub start_with_windows: &'static str,
     pub reset_position: &'static str,
+    pub compact_mode: &'static str,
     pub language: &'static str,
     pub system_default: &'static str,
     pub check_for_updates: &'static str,

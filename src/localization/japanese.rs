@@ -17,6 +17,7 @@ pub(super) const STRINGS: Strings = Strings {
     remaining_usage: "残り",
     start_with_windows: "Windows と同時に開始",
     reset_position: "位置をリセット",
+    compact_mode: "コンパクトモード",
     language: "言語",
     system_default: "システム既定",
     check_for_updates: "更新を確認",

@@ -17,6 +17,7 @@ pub(super) const STRINGS: Strings = Strings {
     remaining_usage: "Restante",
     start_with_windows: "Iniciar com o Windows",
     reset_position: "Redefinir Posição",
+    compact_mode: "Modo Compacto",
     language: "Idioma",
     system_default: "Padrão do Sistema",
     check_for_updates: "Busca atualizações",
