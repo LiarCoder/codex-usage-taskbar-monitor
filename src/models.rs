@@ -34,9 +34,9 @@ pub struct UsageData {
 
 #[derive(Clone, Debug, Default)]
 pub struct AppUsageData {
-    pub claude_code: Option<UsageData>,
+    pub primary_code: Option<UsageData>,
     pub codex: Option<UsageData>,
-    pub antigravity: Option<UsageData>,
+    pub secondary: Option<UsageData>,
 }
 
 #[cfg(test)]

@@ -144,10 +144,7 @@ pub struct Strings {
     pub five_minutes: &'static str,
     pub fifteen_minutes: &'static str,
     pub one_hour: &'static str,
-    pub models: &'static str,
-    pub claude_code_model: &'static str,
     pub codex_model: &'static str,
-    pub antigravity_model: &'static str,
     pub settings: &'static str,
     pub usage_display: &'static str,
     pub used_usage: &'static str,
@@ -176,14 +173,8 @@ pub struct Strings {
     pub hour_suffix: &'static str,
     pub minute_suffix: &'static str,
     pub second_suffix: &'static str,
-    pub token_expired_title: &'static str,
-    pub token_expired_body: &'static str,
     pub codex_token_expired_title: &'static str,
     pub codex_token_expired_body: &'static str,
-    pub antigravity_token_expired_title: &'static str,
-    pub antigravity_token_expired_body: &'static str,
-    pub codex_window_title: &'static str,
-    pub antigravity_window_title: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

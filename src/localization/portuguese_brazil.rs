@@ -3,17 +3,14 @@ use super::Strings;
 pub(super) const UPDATE_VIA_WINGET_LABEL: &str = "Atualizar via WinGet";
 
 pub(super) const STRINGS: Strings = Strings {
-    window_title: "Monitor de Uso do Claude Code",
+    window_title: "Monitor de uso do Codex",
     refresh: "Atualizar",
     update_frequency: "Frequência de Atualização",
     one_minute: "1 Minuto",
     five_minutes: "5 Minutos",
     fifteen_minutes: "15 Minutos",
     one_hour: "1 Hora",
-    models: "Modelos",
-    claude_code_model: "Claude Code",
     codex_model: "Codex",
-    antigravity_model: "Antigravity",
     settings: "Configurações",
     usage_display: "Exibição de Uso",
     used_usage: "Usado",
@@ -42,12 +39,6 @@ pub(super) const STRINGS: Strings = Strings {
     hour_suffix: "h",
     minute_suffix: "m",
     second_suffix: "s",
-    token_expired_title: "Erro de Autenticação do Claude Code",
-    token_expired_body: "Execute 'claude' em um terminal, use '/login' e siga as instruções. Depois disso, atualize ou reinicie este aplicativo.",
     codex_token_expired_title: "Erro de Autenticação do Codex",
     codex_token_expired_body: "Execute 'codex' em um terminal e siga as instruções de login. Depois disso, atualize ou reinicie este aplicativo.",
-    antigravity_token_expired_title: "Erro de Autenticação do Antigravity",
-    antigravity_token_expired_body: "Abra o Antigravity e entre novamente. Depois disso, atualize ou reinicie este aplicativo.",
-    codex_window_title: "Monitor de uso do Codex",
-    antigravity_window_title: "Monitor de uso do Antigravity",
 };

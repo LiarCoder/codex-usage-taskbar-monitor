@@ -10,9 +10,9 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::native_interop::{self, Color, WM_APP_TRAY};
 
-const CLAUDE_TRAY_ICON_ID: u32 = 1;
+const PRIMARY_TRAY_ICON_ID: u32 = 1;
 const CODEX_TRAY_ICON_ID: u32 = 2;
-const ANTIGRAVITY_TRAY_ICON_ID: u32 = 3;
+const SECONDARY_TRAY_ICON_ID: u32 = 3;
 
 /// Menu item ID for toggling widget visibility (used by window.rs context menu).
 pub const IDM_TOGGLE_WIDGET: u16 = 70;
@@ -26,9 +26,9 @@ pub enum TrayAction {
 
 #[derive(Clone, Copy)]
 pub enum TrayIconKind {
-    Claude,
+    Primary,
     Codex,
-    Antigravity,
+    Secondary,
 }
 
 pub struct TrayIconData {
@@ -41,9 +41,9 @@ pub struct TrayIconData {
 impl TrayIconKind {
     fn id(self) -> u32 {
         match self {
-            Self::Claude => CLAUDE_TRAY_ICON_ID,
+            Self::Primary => PRIMARY_TRAY_ICON_ID,
             Self::Codex => CODEX_TRAY_ICON_ID,
-            Self::Antigravity => ANTIGRAVITY_TRAY_ICON_ID,
+            Self::Secondary => SECONDARY_TRAY_ICON_ID,
         }
     }
 }
@@ -94,7 +94,7 @@ fn codex_fill(percent: f64) -> Color {
     }
 }
 
-fn antigravity_fill(percent: f64) -> Color {
+fn secondary_fill(percent: f64) -> Color {
     if percent >= 90.0 {
         Color::from_hex("#FFFFFF")
     } else {
@@ -104,14 +104,14 @@ fn antigravity_fill(percent: f64) -> Color {
 
 /// Create a rounded-rectangle tray icon badge.
 /// `used_percent` controls risk colours while `display_percent` controls the badge text.
-/// For Claude, no display percentage uses the embedded app icon as the loading state.
-/// For Codex and Antigravity, no display percentage uses a provider placeholder badge.
+/// For Primary, no display percentage uses the embedded app icon as the loading state.
+/// For Codex and Secondary, no display percentage uses a provider placeholder badge.
 pub fn create_icon(
     kind: TrayIconKind,
     used_percent: Option<f64>,
     display_percent: Option<f64>,
 ) -> HICON {
-    if matches!(kind, TrayIconKind::Claude) && display_percent.is_none() {
+    if matches!(kind, TrayIconKind::Primary) && display_percent.is_none() {
         let app_icon = load_embedded_app_icon();
         if !app_icon.is_invalid() {
             return app_icon;
@@ -121,42 +121,42 @@ pub fn create_icon(
     let size = 64_i32;
     let margin = 0_i32;
     let radius = 2_i32;
-    let outline = if matches!(kind, TrayIconKind::Codex | TrayIconKind::Antigravity) {
+    let outline = if matches!(kind, TrayIconKind::Codex | TrayIconKind::Secondary) {
         3_i32
     } else {
         0_i32
     };
 
     let fill = match kind {
-        TrayIconKind::Claude => interpolated_fill(used_percent.unwrap_or(0.0)),
+        TrayIconKind::Primary => interpolated_fill(used_percent.unwrap_or(0.0)),
         TrayIconKind::Codex => codex_fill(used_percent.unwrap_or(0.0)),
-        TrayIconKind::Antigravity => antigravity_fill(used_percent.unwrap_or(0.0)),
+        TrayIconKind::Secondary => secondary_fill(used_percent.unwrap_or(0.0)),
     };
     let text_col = match kind {
-        TrayIconKind::Claude => Color::from_hex("#FFFFFF"),
+        TrayIconKind::Primary => Color::from_hex("#FFFFFF"),
         TrayIconKind::Codex if used_percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
         TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Antigravity if used_percent.unwrap_or(0.0) >= 90.0 => {
+        TrayIconKind::Secondary if used_percent.unwrap_or(0.0) >= 90.0 => {
             Color::from_hex("#1967D2")
         }
-        TrayIconKind::Antigravity => Color::from_hex("#FFFFFF"),
+        TrayIconKind::Secondary => Color::from_hex("#FFFFFF"),
     };
     let outline_col = match kind {
-        TrayIconKind::Claude => fill,
+        TrayIconKind::Primary => fill,
         TrayIconKind::Codex if used_percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
         TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Antigravity if used_percent.unwrap_or(0.0) >= 90.0 => {
+        TrayIconKind::Secondary if used_percent.unwrap_or(0.0) >= 90.0 => {
             Color::from_hex("#1967D2")
         }
-        TrayIconKind::Antigravity => Color::from_hex("#FFFFFF"),
+        TrayIconKind::Secondary => Color::from_hex("#FFFFFF"),
     };
 
     let display_text = match display_percent {
         Some(p) => format!("{}", p.round().clamp(0.0, 999.0) as u32),
         None => match kind {
-            TrayIconKind::Claude => String::new(),
+            TrayIconKind::Primary => String::new(),
             TrayIconKind::Codex => "C".to_string(),
-            TrayIconKind::Antigravity => "A".to_string(),
+            TrayIconKind::Secondary => "A".to_string(),
         },
     };
 
@@ -430,17 +430,17 @@ pub fn remove(hwnd: HWND, kind: TrayIconKind) {
 }
 
 pub fn sync(hwnd: HWND, icons: &[TrayIconData]) {
-    let show_claude = icons
+    let show_primary = icons
         .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Claude));
+        .find(|icon| matches!(icon.kind, TrayIconKind::Primary));
     let show_codex = icons
         .iter()
         .find(|icon| matches!(icon.kind, TrayIconKind::Codex));
-    let show_antigravity = icons
+    let show_secondary = icons
         .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Antigravity));
+        .find(|icon| matches!(icon.kind, TrayIconKind::Secondary));
 
-    if let Some(icon) = show_claude {
+    if let Some(icon) = show_primary {
         add(
             hwnd,
             icon.kind,
@@ -456,7 +456,7 @@ pub fn sync(hwnd: HWND, icons: &[TrayIconData]) {
             &icon.tooltip,
         );
     } else {
-        remove(hwnd, TrayIconKind::Claude);
+        remove(hwnd, TrayIconKind::Primary);
     }
 
     if let Some(icon) = show_codex {
@@ -478,7 +478,7 @@ pub fn sync(hwnd: HWND, icons: &[TrayIconData]) {
         remove(hwnd, TrayIconKind::Codex);
     }
 
-    if let Some(icon) = show_antigravity {
+    if let Some(icon) = show_secondary {
         add(
             hwnd,
             icon.kind,
@@ -494,14 +494,14 @@ pub fn sync(hwnd: HWND, icons: &[TrayIconData]) {
             &icon.tooltip,
         );
     } else {
-        remove(hwnd, TrayIconKind::Antigravity);
+        remove(hwnd, TrayIconKind::Secondary);
     }
 }
 
 pub fn remove_all(hwnd: HWND) {
-    remove(hwnd, TrayIconKind::Claude);
+    remove(hwnd, TrayIconKind::Primary);
     remove(hwnd, TrayIconKind::Codex);
-    remove(hwnd, TrayIconKind::Antigravity);
+    remove(hwnd, TrayIconKind::Secondary);
 }
 
 /// Interpret a tray callback message and return the action to take.

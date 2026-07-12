@@ -3,17 +3,14 @@ use super::Strings;
 pub(super) const UPDATE_VIA_WINGET_LABEL: &str = "Update via WinGet";
 
 pub(super) const STRINGS: Strings = Strings {
-    window_title: "Claude Code Usage Monitor",
+    window_title: "Codex Usage Monitor",
     refresh: "Refresh",
     update_frequency: "Update Frequency",
     one_minute: "1 Minute",
     five_minutes: "5 Minutes",
     fifteen_minutes: "15 Minutes",
     one_hour: "1 Hour",
-    models: "Models",
-    claude_code_model: "Claude Code",
     codex_model: "Codex",
-    antigravity_model: "Antigravity",
     settings: "Settings",
     usage_display: "Usage Display",
     used_usage: "Used",
@@ -41,13 +38,7 @@ pub(super) const STRINGS: Strings = Strings {
     day_suffix: "d",
     hour_suffix: "h",
     minute_suffix: "m",
-    token_expired_title: "Claude Code Auth Error",
-    token_expired_body: "Run 'claude' in a terminal, then use '/login' and follow the prompts. After that, refresh or restart this app.",
     codex_token_expired_title: "Codex Auth Error",
     codex_token_expired_body: "Run 'codex' in a terminal and follow the sign-in prompts. After that, refresh or restart this app.",
-    antigravity_token_expired_title: "Antigravity Auth Error",
-    antigravity_token_expired_body: "Open Antigravity and sign in again. After that, refresh or restart this app.",
-    codex_window_title: "Codex Usage Monitor",
-    antigravity_window_title: "Antigravity Usage Monitor",
     second_suffix: "s",
 };
