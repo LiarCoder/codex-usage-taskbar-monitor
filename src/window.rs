@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
-use crate::models::{AppUsageData, UsageDisplayMode};
+use crate::models::{UsageData, UsageDisplayMode};
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
     WM_APP_USAGE_UPDATED,
@@ -55,31 +55,22 @@ struct AppState {
     language: LanguageId,
     install_channel: InstallChannel,
 
+    /// Codex 5h-window usage.
     session_percent: f64,
     session_text: String,
+    /// Codex 7d-window usage.
     weekly_percent: f64,
     weekly_text: String,
-    codex_session_percent: f64,
-    codex_session_text: String,
-    codex_weekly_percent: f64,
-    codex_weekly_text: String,
-    secondary_session_percent: f64,
-    secondary_session_text: String,
-    secondary_weekly_percent: f64,
-    secondary_weekly_text: String,
-    show_primary_code: bool,
-    show_codex: bool,
-    show_secondary: bool,
+
     usage_display: UsageDisplayMode,
 
-    data: Option<AppUsageData>,
+    data: Option<UsageData>,
 
     poll_interval_ms: u32,
     retry_count: u32,
     force_notify_auth_error: bool,
     auth_error_paused_polling: bool,
-    auth_watch_mode: poller::CredentialWatchMode,
-    auth_watch_snapshot: poller::CredentialWatchSnapshot,
+    auth_watch_snapshot: String,
     last_poll_ok: bool,
     update_status: UpdateStatus,
     last_update_check_unix: Option<u64>,
@@ -100,32 +91,8 @@ impl AppState {
         display_percentage_for_availability(self.usage_display, used_percentage, available)
     }
 
-    fn primary_code_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.primary_code.as_ref())
-            .is_some()
-    }
-
     fn codex_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.codex.as_ref())
-            .is_some()
-    }
-
-    fn secondary_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.secondary.as_ref())
-            .is_some()
-    }
-
-    fn secondary_weekly_usage_available(&self) -> bool {
-        self.data
-            .as_ref()
-            .and_then(|data| data.secondary.as_ref())
-            .is_some_and(|usage| usage.weekly.resets_at.is_some() || usage.weekly.percentage != 0.0)
+        self.data.is_some()
     }
 }
 
@@ -361,12 +328,6 @@ struct SettingsFile {
     widget_visible: bool,
     #[serde(default)]
     compact_mode: bool,
-    #[serde(skip, default = "default_show_primary_code")]
-    show_primary_code: bool,
-    #[serde(skip, default = "default_show_codex")]
-    show_codex: bool,
-    #[serde(skip, default = "default_show_secondary")]
-    show_secondary: bool,
     #[serde(default)]
     usage_display: UsageDisplayMode,
 }
@@ -381,9 +342,6 @@ impl Default for SettingsFile {
             last_update_check_unix: None,
             widget_visible: true,
             compact_mode: false,
-            show_primary_code: false,
-            show_codex: true,
-            show_secondary: false,
             usage_display: UsageDisplayMode::Used,
         }
     }
@@ -397,28 +355,12 @@ fn default_widget_visible() -> bool {
     true
 }
 
-fn default_show_primary_code() -> bool {
-    false
-}
-
-fn default_show_codex() -> bool {
-    true
-}
-
-fn default_show_secondary() -> bool {
-    false
-}
-
 fn load_settings() -> SettingsFile {
     let content = match std::fs::read_to_string(settings_path()) {
         Ok(c) => c,
         Err(_) => return SettingsFile::default(),
     };
-    let mut settings: SettingsFile = serde_json::from_str(&content).unwrap_or_default();
-    settings.show_primary_code = false;
-    settings.show_codex = true;
-    settings.show_secondary = false;
-    settings
+    serde_json::from_str(&content).unwrap_or_default()
 }
 
 fn save_settings(settings: &SettingsFile) {
@@ -444,102 +386,39 @@ fn save_state_settings() {
             last_update_check_unix: s.last_update_check_unix,
             widget_visible: s.widget_visible,
             compact_mode: s.compact_mode,
-            show_primary_code: s.show_primary_code,
-            show_codex: s.show_codex,
-            show_secondary: s.show_secondary,
             usage_display: s.usage_display,
         });
     }
 }
 
-fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
+fn tray_icon_data_from_state() -> Option<tray_icon::TrayIconData> {
     let state = lock_state();
     match state.as_ref() {
-        Some(s) if s.last_poll_ok => {
-            let mut icons = Vec::new();
-            if s.show_primary_code {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Primary,
-                    used_percent: Some(s.session_percent),
-                    display_percent: Some(
-                        s.display_percentage(s.session_percent, s.primary_code_usage_available()),
-                    ),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
-                        s.language.strings().codex_model,
-                        s.session_text,
-                        s.weekly_text
-                    ),
-                });
-            }
-            if s.show_codex {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Codex,
-                    used_percent: Some(s.codex_session_percent),
-                    display_percent: Some(
-                        s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
-                    ),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
-                        s.language.strings().codex_model,
-                        s.codex_session_text,
-                        s.codex_weekly_text
-                    ),
-                });
-            }
-            if s.show_secondary {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Secondary,
-                    used_percent: Some(s.secondary_session_percent),
-                    display_percent: Some(s.display_percentage(
-                        s.secondary_session_percent,
-                        s.secondary_usage_available(),
-                    )),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
-                        s.language.strings().codex_model,
-                        s.secondary_session_text,
-                        s.secondary_weekly_text
-                    ),
-                });
-            }
-            icons
-        }
-        Some(s) => {
-            let mut icons = Vec::new();
-            if s.show_primary_code {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Primary,
-                    used_percent: None,
-                    display_percent: None,
-                    tooltip: s.language.strings().window_title.to_string(),
-                });
-            }
-            if s.show_codex {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Codex,
-                    used_percent: None,
-                    display_percent: None,
-                    tooltip: s.language.strings().window_title.to_string(),
-                });
-            }
-            if s.show_secondary {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Secondary,
-                    used_percent: None,
-                    display_percent: None,
-                    tooltip: s.language.strings().window_title.to_string(),
-                });
-            }
-            icons
-        }
-        None => Vec::new(),
+        Some(s) if s.last_poll_ok => Some(tray_icon::TrayIconData {
+            used_percent: Some(s.session_percent),
+            display_percent: Some(
+                s.display_percentage(s.session_percent, s.codex_usage_available()),
+            ),
+            tooltip: format!(
+                "{} 5h: {} | 7d: {}",
+                s.language.strings().codex_model,
+                s.session_text,
+                s.weekly_text
+            ),
+        }),
+        Some(s) => Some(tray_icon::TrayIconData {
+            used_percent: None,
+            display_percent: None,
+            tooltip: s.language.strings().window_title.to_string(),
+        }),
+        None => None,
     }
 }
 
 fn sync_tray_icons(hwnd: HWND) {
-    let icons = tray_icon_data_from_state();
-    tray_icon::sync(hwnd, &icons);
+    if let Some(icon) = tray_icon_data_from_state() {
+        tray_icon::sync(hwnd, &icon);
+    }
 }
 
 fn toggle_widget_visibility(hwnd: HWND) {
@@ -714,37 +593,11 @@ fn refresh_usage_texts(state: &mut AppState) {
         return;
     };
 
-    if let Some(primary_code) = data.primary_code.as_ref() {
-        state.session_text =
-            poller::format_line(&primary_code.session, strings, state.usage_display);
-        state.weekly_text = poller::format_line(&primary_code.weekly, strings, state.usage_display);
-    } else if state.show_primary_code {
-        state.session_text = "!".to_string();
-        state.weekly_text = "!".to_string();
-    }
-
-    if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text =
-            poller::format_line(&codex.session, strings, state.usage_display);
-        state.codex_weekly_text = poller::format_line(&codex.weekly, strings, state.usage_display);
-    } else if state.show_codex {
-        state.codex_session_text = "!".to_string();
-        state.codex_weekly_text = "!".to_string();
-    }
-
-    if let Some(secondary) = data.secondary.as_ref() {
-        state.secondary_session_text =
-            poller::format_line(&secondary.session, strings, state.usage_display);
-        state.secondary_weekly_text =
-            if secondary.weekly.resets_at.is_none() && secondary.weekly.percentage == 0.0 {
-                "--".to_string()
-            } else {
-                poller::format_line(&secondary.weekly, strings, state.usage_display)
-            };
-    } else if state.show_secondary {
-        state.secondary_session_text = "!".to_string();
-        state.secondary_weekly_text = "!".to_string();
-    }
+    // Codex is the only supported provider, so the `data` value itself
+    // is the Codex payload. The legacy `primary_code` / `secondary` slots
+    // are no longer populated by the poller and have nothing to render.
+    state.session_text = poller::format_line(&data.session, strings, state.usage_display);
+    state.weekly_text = poller::format_line(&data.weekly, strings, state.usage_display);
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1152,16 +1005,8 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
     }
 }
 
-fn active_model_count(show_primary_code: bool, show_codex: bool, show_secondary: bool) -> i32 {
-    (show_primary_code as i32 + show_codex as i32 + show_secondary as i32).max(1)
-}
-
-fn row_bar_segment_count(active_models: i32) -> i32 {
-    match active_models {
-        1 => SEGMENT_COUNT,
-        2 => 5,
-        _ => 4,
-    }
+fn row_bar_segment_count(_active_models: i32) -> i32 {
+    SEGMENT_COUNT
 }
 
 fn total_widget_width_for(active_models: i32, compact_mode: bool) -> i32 {
@@ -1178,14 +1023,7 @@ fn total_widget_width_for(active_models: i32, compact_mode: bool) -> i32 {
 }
 
 fn total_widget_width_for_state(state: &AppState) -> i32 {
-    total_widget_width_for(
-        active_model_count(
-            state.show_primary_code,
-            state.show_codex,
-            state.show_secondary,
-        ),
-        state.compact_mode,
-    )
+    total_widget_width_for(1 /* codex-only */, state.compact_mode)
 }
 
 fn total_widget_width() -> i32 {
@@ -1195,7 +1033,7 @@ fn total_widget_width() -> i32 {
             .as_ref()
             .map(|s| {
                 (
-                    active_model_count(s.show_primary_code, s.show_codex, s.show_secondary),
+                    1, // codex-only
                     s.compact_mode,
                 )
             })
@@ -1204,43 +1042,11 @@ fn total_widget_width() -> i32 {
     total_widget_width_for(active_models, compact_mode)
 }
 
-fn primary_accent_color() -> Color {
-    Color::from_hex("#D97757")
-}
-
-fn codex_accent_color(is_dark: bool) -> Color {
+fn accent_color(is_dark: bool) -> Color {
     if is_dark {
         Color::from_hex("#F5F5F5")
     } else {
         Color::from_hex("#1F1F1F")
-    }
-}
-
-fn secondary_accent_color() -> Color {
-    Color::from_hex("#4285F4")
-}
-
-fn primary_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#F09A7A")
-    } else {
-        Color::from_hex("#A94F32")
-    }
-}
-
-fn codex_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#F5F5F5")
-    } else {
-        Color::from_hex("#1F1F1F")
-    }
-}
-
-fn secondary_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#8AB4F8")
-    } else {
-        Color::from_hex("#1967D2")
     }
 }
 
@@ -1319,11 +1125,7 @@ pub fn run() {
 
         // Create as layered popup (will be reparented into taskbar)
         let title = native_interop::wide_str(language.strings().window_title);
-        let initial_model_count = active_model_count(
-            settings.show_primary_code,
-            settings.show_codex,
-            settings.show_secondary,
-        );
+        let initial_model_count = 1; // codex-only
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
             PCWSTR::from_raw(class_name.as_ptr()),
@@ -1378,25 +1180,13 @@ pub fn run() {
                 session_text: "--".to_string(),
                 weekly_percent: 0.0,
                 weekly_text: "--".to_string(),
-                codex_session_percent: 0.0,
-                codex_session_text: "--".to_string(),
-                codex_weekly_percent: 0.0,
-                codex_weekly_text: "--".to_string(),
-                secondary_session_percent: 0.0,
-                secondary_session_text: "--".to_string(),
-                secondary_weekly_percent: 0.0,
-                secondary_weekly_text: "--".to_string(),
-                show_primary_code: settings.show_primary_code,
-                show_codex: settings.show_codex,
-                show_secondary: settings.show_secondary,
                 usage_display: settings.usage_display,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
                 force_notify_auth_error: false,
                 auth_error_paused_polling: false,
-                auth_watch_mode: poller::CredentialWatchMode::ActiveSource,
-                auth_watch_snapshot: Vec::new(),
+                auth_watch_snapshot: String::new(),
                 last_poll_ok: false,
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
@@ -1501,21 +1291,10 @@ fn render_layered() {
         is_dark,
         embedded,
         strings,
-        session_pct,
-        session_text,
-        weekly_pct,
-        weekly_text,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
-        secondary_session_pct,
-        secondary_session_text,
-        secondary_weekly_pct,
-        secondary_weekly_text,
-        show_primary_code,
-        show_codex,
-        show_secondary,
         compact_mode,
     ) = {
         let state = lock_state();
@@ -1525,24 +1304,10 @@ fn render_layered() {
                 s.is_dark,
                 s.embedded,
                 s.language.strings(),
-                s.display_percentage(s.session_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.session_percent, s.codex_usage_available()),
                 s.session_text.clone(),
-                s.display_percentage(s.weekly_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.weekly_percent, s.codex_usage_available()),
                 s.weekly_text.clone(),
-                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
-                s.codex_session_text.clone(),
-                s.display_percentage(s.codex_weekly_percent, s.codex_usage_available()),
-                s.codex_weekly_text.clone(),
-                s.display_percentage(s.secondary_session_percent, s.secondary_usage_available()),
-                s.secondary_session_text.clone(),
-                s.display_percentage(
-                    s.secondary_weekly_percent,
-                    s.secondary_weekly_usage_available(),
-                ),
-                s.secondary_weekly_text.clone(),
-                s.show_primary_code,
-                s.show_codex,
-                s.show_secondary,
                 s.compact_mode,
             ),
             None => return,
@@ -1562,9 +1327,7 @@ fn render_layered() {
     let width = total_widget_width();
     let height = sc(WIDGET_HEIGHT);
 
-    let accent = primary_accent_color();
-    let codex_accent = codex_accent_color(is_dark);
-    let secondary_accent = secondary_accent_color();
+    let codex_accent = accent_color(is_dark);
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -1614,34 +1377,24 @@ fn render_layered() {
         // Render once with the actual taskbar background colour.
         // Using an opaque background lets us use CLEARTYPE_QUALITY for
         // sub-pixel font rendering that matches the rest of the OS.
+        let ctx = RenderContext {
+            hdc: mem_dc,
+            is_dark,
+            text_color,
+            accent: codex_accent,
+            track,
+            compact_mode,
+        };
         paint_content(
-            mem_dc,
+            &ctx,
             width,
             height,
-            is_dark,
             &bg_color,
-            &text_color,
-            &accent,
-            &track,
             strings,
-            session_pct,
-            &session_text,
-            weekly_pct,
-            &weekly_text,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
-            secondary_session_pct,
-            &secondary_session_text,
-            secondary_weekly_pct,
-            &secondary_weekly_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
-            compact_mode,
-            &codex_accent,
-            &secondary_accent,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1690,35 +1443,30 @@ fn render_layered() {
     }
 }
 
-/// Paint all widget content onto a DC with a given background color.
-fn paint_content(
+/// Bundles the immutable drawing parameters shared across the
+/// GDI rendering helpers so each function stays under clippy's
+/// 7-argument threshold.
+struct RenderContext {
     hdc: HDC,
+    is_dark: bool,
+    text_color: Color,
+    accent: Color,
+    track: Color,
+    compact_mode: bool,
+}
+
+/// Paint all widget content onto a DC with a given background color.
+#[allow(clippy::too_many_arguments)]
+fn paint_content(
+    ctx: &RenderContext,
     width: i32,
     height: i32,
-    is_dark: bool,
     bg: &Color,
-    text_color: &Color,
-    accent: &Color,
-    track: &Color,
     strings: Strings,
     session_pct: f64,
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
-    codex_session_pct: f64,
-    codex_session_text: &str,
-    codex_weekly_pct: f64,
-    codex_weekly_text: &str,
-    secondary_session_pct: f64,
-    secondary_session_text: &str,
-    secondary_weekly_pct: f64,
-    secondary_weekly_text: &str,
-    show_primary_code: bool,
-    show_codex: bool,
-    show_secondary: bool,
-    compact_mode: bool,
-    codex_accent: &Color,
-    secondary_accent: &Color,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1729,7 +1477,7 @@ fn paint_content(
         };
 
         let bg_brush = CreateSolidBrush(COLORREF(bg.to_colorref()));
-        FillRect(hdc, &client_rect, bg_brush);
+        FillRect(ctx.hdc, &client_rect, bg_brush);
         let _ = DeleteObject(bg_brush);
 
         // Left divider
@@ -1737,7 +1485,7 @@ fn paint_content(
         let divider_top = (height - divider_h) / 2;
         let divider_bottom = divider_top + divider_h;
 
-        let (div_left, div_right) = if is_dark {
+        let (div_left, div_right) = if ctx.is_dark {
             ((80, 80, 80), (40, 40, 40))
         } else {
             ((160, 160, 160), (230, 230, 230))
@@ -1752,7 +1500,7 @@ fn paint_content(
             right: sc(2),
             bottom: divider_bottom,
         };
-        FillRect(hdc, &left_rect, left_brush);
+        FillRect(ctx.hdc, &left_rect, left_brush);
         let _ = DeleteObject(left_brush);
 
         let right_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
@@ -1766,15 +1514,15 @@ fn paint_content(
             right: sc(3),
             bottom: divider_bottom,
         };
-        FillRect(hdc, &right_rect, right_brush);
+        FillRect(ctx.hdc, &right_rect, right_brush);
         let _ = DeleteObject(right_brush);
 
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
         let row2_y = height - sc(5) - sc(SEGMENT_H);
         let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
 
-        let _ = SetBkMode(hdc, TRANSPARENT);
-        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+        let _ = SetBkMode(ctx.hdc, TRANSPARENT);
+        let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));
 
         let font_name = native_interop::wide_str("Segoe UI");
         let font = CreateFontW(
@@ -1793,95 +1541,43 @@ fn paint_content(
             (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
             PCWSTR::from_raw(font_name.as_ptr()),
         );
-        let old_font = SelectObject(hdc, font);
+        let old_font = SelectObject(ctx.hdc, font);
 
+        // Session row (5h window)
         draw_row(
-            hdc,
+            ctx,
             content_x,
             row1_y,
-            is_dark,
-            text_color,
             strings.session_window,
             session_pct,
             session_text,
-            codex_session_pct,
-            codex_session_text,
-            secondary_session_pct,
-            secondary_session_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
-            compact_mode,
-            accent,
-            codex_accent,
-            secondary_accent,
-            track,
         );
+        // Weekly row (7d window)
         draw_row(
-            hdc,
+            ctx,
             content_x,
             row2_y,
-            is_dark,
-            text_color,
             strings.weekly_window,
             weekly_pct,
             weekly_text,
-            codex_weekly_pct,
-            codex_weekly_text,
-            secondary_weekly_pct,
-            secondary_weekly_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
-            compact_mode,
-            accent,
-            codex_accent,
-            secondary_accent,
-            track,
         );
 
-        SelectObject(hdc, old_font);
+        SelectObject(ctx.hdc, old_font);
         let _ = DeleteObject(font);
     }
 }
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    let (show_primary_code, show_codex, show_secondary) = {
-        let state = lock_state();
-        state
-            .as_ref()
-            .map(|s| (s.show_primary_code, s.show_codex, s.show_secondary))
-            .unwrap_or((true, false, false))
-    };
 
-    match poller::poll(show_primary_code, show_codex, show_secondary) {
+    match poller::poll() {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
-                if let Some(primary_code) = data.primary_code.as_ref() {
-                    s.session_percent = primary_code.session.percentage;
-                    s.weekly_percent = primary_code.weekly.percentage;
-                } else if s.show_primary_code {
-                    s.session_percent = 0.0;
-                    s.weekly_percent = 0.0;
-                }
-                if let Some(codex) = data.codex.as_ref() {
-                    s.codex_session_percent = codex.session.percentage;
-                    s.codex_weekly_percent = codex.weekly.percentage;
-                } else if s.show_codex {
-                    s.codex_session_percent = 0.0;
-                    s.codex_weekly_percent = 0.0;
-                }
-                if let Some(secondary) = data.secondary.as_ref() {
-                    s.secondary_session_percent = secondary.session.percentage;
-                    s.secondary_weekly_percent = secondary.weekly.percentage;
-                } else if s.show_secondary {
-                    s.secondary_session_percent = 0.0;
-                    s.secondary_weekly_percent = 0.0;
-                }
+                s.session_percent = data.session.percentage;
+                s.weekly_percent = data.weekly.percentage;
                 // Stop fast-poll if reset data is now fresh
-                if !poller::app_is_past_reset(&data) {
+                if !poller::is_past_reset(&data) {
                     unsafe {
                         let _ = KillTimer(hwnd, TIMER_RESET_POLL);
                     }
@@ -1901,7 +1597,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                 }
                 s.force_notify_auth_error = false;
                 s.auth_error_paused_polling = false;
-                s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
                 s.auth_watch_snapshot.clear();
             }
 
@@ -1911,23 +1606,8 @@ fn do_poll(send_hwnd: SendHwnd) {
         }
         Err(e) => {
             let auth_watch = match e {
-                poller::PollError::AuthRequired | poller::PollError::TokenExpired
-                    if show_secondary && !show_primary_code && !show_codex =>
-                {
-                    Some((
-                        poller::CredentialWatchMode::Secondary,
-                        poller::credential_watch_snapshot(poller::CredentialWatchMode::Secondary),
-                    ))
-                }
-                poller::PollError::AuthRequired | poller::PollError::TokenExpired => Some((
-                    poller::CredentialWatchMode::ActiveSource,
-                    poller::credential_watch_snapshot(poller::CredentialWatchMode::ActiveSource),
-                )),
-                poller::PollError::NoCredentials => Some((
-                    poller::CredentialWatchMode::AllSources,
-                    poller::credential_watch_snapshot(poller::CredentialWatchMode::AllSources),
-                )),
                 poller::PollError::RequestFailed => None,
+                _ => Some(poller::credential_watch_snapshot()),
             };
             // Distinguish auth-required errors from transient errors.
             let notify_auth_error = {
@@ -1936,21 +1616,17 @@ fn do_poll(send_hwnd: SendHwnd) {
                 if let Some(s) = state.as_mut() {
                     s.last_poll_ok = false;
                     match auth_watch {
-                        Some((watch_mode, watch_snapshot)) => {
-                            // Only show the balloon on the first failure so it doesn't spam.
+                        Some(watch_snapshot) => {
+                            // Only show the balloon on the first failure so it
+                            // doesn't spam.
                             if s.retry_count == 0 || s.force_notify_auth_error {
                                 should_notify = true;
                             }
                             s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = true;
-                            s.auth_watch_mode = watch_mode;
                             s.auth_watch_snapshot = watch_snapshot;
                             s.session_text = "!".to_string();
                             s.weekly_text = "!".to_string();
-                            s.codex_session_text = "!".to_string();
-                            s.codex_weekly_text = "!".to_string();
-                            s.secondary_session_text = "!".to_string();
-                            s.secondary_weekly_text = "!".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
@@ -1959,18 +1635,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 SetTimer(hwnd, TIMER_POLL, s.poll_interval_ms, None);
                             }
                         }
-                        _ => {
-                            // Transient network / credential-missing errors: exponential backoff.
+                        None => {
+                            // Transient network errors: exponential backoff.
                             s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = false;
-                            s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
                             s.auth_watch_snapshot.clear();
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
-                            s.codex_weekly_text = "...".to_string();
-                            s.secondary_session_text = "...".to_string();
-                            s.secondary_weekly_text = "...".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
@@ -1990,32 +1661,15 @@ fn do_poll(send_hwnd: SendHwnd) {
                 let balloon = {
                     let state = lock_state();
                     state.as_ref().map(|s| {
-                        if s.show_primary_code {
-                            (
-                                s.language.strings(),
-                                tray_icon::TrayIconKind::Primary,
-                                s.language.strings().codex_token_expired_title,
-                                s.language.strings().codex_token_expired_body,
-                            )
-                        } else if s.show_codex {
-                            (
-                                s.language.strings(),
-                                tray_icon::TrayIconKind::Codex,
-                                s.language.strings().codex_token_expired_title,
-                                s.language.strings().codex_token_expired_body,
-                            )
-                        } else {
-                            (
-                                s.language.strings(),
-                                tray_icon::TrayIconKind::Secondary,
-                                s.language.strings().codex_token_expired_title,
-                                s.language.strings().codex_token_expired_body,
-                            )
-                        }
+                        (
+                            s.language.strings(),
+                            s.language.strings().codex_token_expired_title,
+                            s.language.strings().codex_token_expired_body,
+                        )
                     })
                 };
-                if let Some((_strings, kind, title, body)) = balloon {
-                    tray_icon::notify_balloon(hwnd, kind, title, body);
+                if let Some((_strings, title, body)) = balloon {
+                    tray_icon::notify_balloon(hwnd, title, body);
                 }
             }
 
@@ -2048,31 +1702,15 @@ fn schedule_countdown_timer() {
     };
 
     // If a reset time has passed, poll every 5s to pick up fresh data
-    if poller::app_is_past_reset(data) {
+    if poller::is_past_reset(data) {
         unsafe {
             SetTimer(hwnd, TIMER_RESET_POLL, 5_000, None);
         }
     }
 
     let delays = [
-        data.primary_code
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
-        data.primary_code
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
-        data.codex
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
-        data.codex
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
-        data.secondary
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
-        data.secondary
-            .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+        poller::time_until_display_change(data.session.resets_at),
+        poller::time_until_display_change(data.weekly.resets_at),
     ];
     let min_delay = delays.into_iter().flatten().min();
 
@@ -2333,25 +1971,19 @@ unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    let auth_watch = {
+                    let watch = {
                         let state = lock_state();
-                        state.as_ref().map(|s| {
-                            (
-                                s.auth_error_paused_polling,
-                                s.auth_watch_mode,
-                                s.auth_watch_snapshot.clone(),
-                            )
-                        })
+                        state
+                            .as_ref()
+                            .map(|s| (s.auth_error_paused_polling, s.auth_watch_snapshot.clone()))
                     };
-                    match auth_watch {
-                        Some((true, watch_mode, previous_snapshot)) => {
-                            let current_snapshot = poller::credential_watch_snapshot(watch_mode);
+                    match watch {
+                        Some((true, previous_snapshot)) => {
+                            let current_snapshot = poller::credential_watch_snapshot();
                             if current_snapshot != previous_snapshot {
                                 let mut state = lock_state();
                                 if let Some(s) = state.as_mut() {
-                                    if s.auth_error_paused_polling
-                                        && s.auth_watch_mode == watch_mode
-                                    {
+                                    if s.auth_error_paused_polling {
                                         s.auth_watch_snapshot = current_snapshot;
                                     }
                                 }
@@ -2362,7 +1994,7 @@ unsafe extern "system" fn wnd_proc(
                                 });
                             }
                         }
-                        Some((false, _, _)) => {
+                        Some((false, _)) => {
                             let sh = SendHwnd::from_hwnd(hwnd);
                             std::thread::spawn(move || {
                                 do_poll(sh);
@@ -2600,8 +2232,6 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
-                            s.codex_weekly_text = "...".to_string();
                             s.force_notify_auth_error = true;
                         }
                     }
@@ -2762,7 +2392,7 @@ unsafe extern "system" fn wnd_proc(
                 tray_icon::TrayAction::ShowContextMenu => {
                     show_context_menu(hwnd);
                 }
-                tray_icon::TrayAction::None => {}
+                tray_icon::TrayAction::Nothing => {}
             }
             LRESULT(0)
         }
@@ -2774,7 +2404,7 @@ unsafe extern "system" fn wnd_proc(
             if let Some(h) = hook {
                 native_interop::unhook_win_event(h);
             }
-            tray_icon::remove_all(hwnd);
+            tray_icon::remove(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -3052,21 +2682,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let (
         is_dark,
         strings,
-        session_pct,
-        session_text,
-        weekly_pct,
-        weekly_text,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
-        secondary_session_pct,
-        secondary_session_text,
-        secondary_weekly_pct,
-        secondary_weekly_text,
-        show_primary_code,
-        show_codex,
-        show_secondary,
         compact_mode,
     ) = {
         let state = lock_state();
@@ -3074,33 +2693,17 @@ fn paint(hdc: HDC, hwnd: HWND) {
             Some(s) => (
                 s.is_dark,
                 s.language.strings(),
-                s.display_percentage(s.session_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.session_percent, s.codex_usage_available()),
                 s.session_text.clone(),
-                s.display_percentage(s.weekly_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.weekly_percent, s.codex_usage_available()),
                 s.weekly_text.clone(),
-                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
-                s.codex_session_text.clone(),
-                s.display_percentage(s.codex_weekly_percent, s.codex_usage_available()),
-                s.codex_weekly_text.clone(),
-                s.display_percentage(s.secondary_session_percent, s.secondary_usage_available()),
-                s.secondary_session_text.clone(),
-                s.display_percentage(
-                    s.secondary_weekly_percent,
-                    s.secondary_weekly_usage_available(),
-                ),
-                s.secondary_weekly_text.clone(),
-                s.show_primary_code,
-                s.show_codex,
-                s.show_secondary,
                 s.compact_mode,
             ),
             None => return,
         }
     };
 
-    let accent = primary_accent_color();
-    let codex_accent = codex_accent_color(is_dark);
-    let secondary_accent = secondary_accent_color();
+    let codex_accent = accent_color(is_dark);
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -3131,34 +2734,24 @@ fn paint(hdc: HDC, hwnd: HWND) {
         let mem_bmp = CreateCompatibleBitmap(hdc, width, height);
         let old_bmp = SelectObject(mem_dc, mem_bmp);
 
+        let ctx = RenderContext {
+            hdc: mem_dc,
+            is_dark,
+            text_color,
+            accent: codex_accent,
+            track,
+            compact_mode,
+        };
         paint_content(
-            mem_dc,
+            &ctx,
             width,
             height,
-            is_dark,
             &bg_color,
-            &text_color,
-            &accent,
-            &track,
             strings,
-            session_pct,
-            &session_text,
-            weekly_pct,
-            &weekly_text,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
-            secondary_session_pct,
-            &secondary_session_text,
-            secondary_weekly_pct,
-            &secondary_weekly_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
-            compact_mode,
-            &codex_accent,
-            &secondary_accent,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -3169,50 +2762,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
     }
 }
 
-fn draw_row(
-    hdc: HDC,
-    x: i32,
-    y: i32,
-    is_dark: bool,
-    text_color: &Color,
-    label: &str,
-    primary_percent: f64,
-    primary_text: &str,
-    codex_percent: f64,
-    codex_text: &str,
-    secondary_percent: f64,
-    secondary_text: &str,
-    show_primary_code: bool,
-    show_codex: bool,
-    show_secondary: bool,
-    compact_mode: bool,
-    primary_accent: &Color,
-    codex_accent: &Color,
-    secondary_accent: &Color,
-    track: &Color,
-) {
+fn draw_row(ctx: &RenderContext, x: i32, y: i32, label: &str, percent: f64, bar_text: &str) {
     let seg_h = sc(SEGMENT_H);
-    let active_models = active_model_count(show_primary_code, show_codex, show_secondary);
-    let segment_count = row_bar_segment_count(active_models);
-    let use_model_text_colors = active_models > 1;
-    let primary_value_color = if use_model_text_colors {
-        primary_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let codex_value_color = if use_model_text_colors {
-        codex_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let secondary_value_color = if use_model_text_colors {
-        secondary_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
+    let segment_count = SEGMENT_COUNT;
+    // codex-only: always use the generic text color
+    let value_color = ctx.text_color;
 
     unsafe {
-        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+        let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));
         let mut label_wide: Vec<u16> = label.encode_utf16().collect();
         let mut label_rect = RECT {
             left: x,
@@ -3221,57 +2778,22 @@ fn draw_row(
             bottom: y + seg_h,
         };
         let _ = DrawTextW(
-            hdc,
+            ctx.hdc,
             &mut label_wide,
             &mut label_rect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         );
 
-        let mut model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
-        if show_primary_code {
-            draw_usage_bar(
-                hdc,
-                model_x,
-                y,
-                segment_count,
-                primary_percent,
-                primary_text,
-                primary_accent,
-                track,
-                &primary_value_color,
-                compact_mode,
-            );
-            model_x += model_usage_width(segment_count, compact_mode) + sc(MODEL_RIGHT_MARGIN);
-        }
-        if show_codex {
-            draw_usage_bar(
-                hdc,
-                model_x,
-                y,
-                segment_count,
-                codex_percent,
-                codex_text,
-                codex_accent,
-                track,
-                &codex_value_color,
-                compact_mode,
-            );
-            model_x += model_usage_width(segment_count, compact_mode) + sc(MODEL_RIGHT_MARGIN);
-        }
-        if show_secondary {
-            draw_usage_bar(
-                hdc,
-                model_x,
-                y,
-                segment_count,
-                secondary_percent,
-                secondary_text,
-                secondary_accent,
-                track,
-                &secondary_value_color,
-                compact_mode,
-            );
-        }
+        let model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
+        draw_usage_bar(
+            ctx,
+            model_x,
+            y,
+            segment_count,
+            percent,
+            bar_text,
+            &value_color,
+        );
     }
 }
 
@@ -3286,16 +2808,13 @@ fn model_usage_width(segment_count: i32, compact_mode: bool) -> i32 {
 }
 
 fn draw_usage_bar(
-    hdc: HDC,
+    ctx: &RenderContext,
     bar_x: i32,
     y: i32,
     segment_count: i32,
     percent: f64,
     text: &str,
-    accent: &Color,
-    track: &Color,
     text_color: &Color,
-    compact_mode: bool,
 ) {
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -3303,7 +2822,7 @@ fn draw_usage_bar(
     let corner_r = sc(CORNER_RADIUS);
 
     unsafe {
-        if !compact_mode {
+        if !ctx.compact_mode {
             let percent_clamped = percent.clamp(0.0, 100.0);
             let segment_percent = 100.0 / segment_count as f64;
 
@@ -3320,11 +2839,11 @@ fn draw_usage_bar(
                 };
 
                 if percent_clamped >= seg_end {
-                    draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
+                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.accent, corner_r);
                 } else if percent_clamped <= seg_start {
-                    draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.track, corner_r);
                 } else {
-                    draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.track, corner_r);
                     let fraction = (percent_clamped - seg_start) / segment_percent;
                     let fill_width = (seg_w as f64 * fraction) as i32;
                     if fill_width > 0 {
@@ -3342,18 +2861,18 @@ fn draw_usage_bar(
                             corner_r * 2,
                             corner_r * 2,
                         );
-                        let _ = SelectClipRgn(hdc, rgn);
-                        let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
-                        FillRect(hdc, &fill_rect, brush);
+                        let _ = SelectClipRgn(ctx.hdc, rgn);
+                        let brush = CreateSolidBrush(COLORREF(ctx.accent.to_colorref()));
+                        FillRect(ctx.hdc, &fill_rect, brush);
                         let _ = DeleteObject(brush);
-                        let _ = SelectClipRgn(hdc, HRGN::default());
+                        let _ = SelectClipRgn(ctx.hdc, HRGN::default());
                         let _ = DeleteObject(rgn);
                     }
                 }
             }
         }
 
-        let text_x = if compact_mode {
+        let text_x = if ctx.compact_mode {
             bar_x
         } else {
             bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN)
@@ -3365,9 +2884,9 @@ fn draw_usage_bar(
             right: text_x + sc(TEXT_WIDTH),
             bottom: y + seg_h,
         };
-        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+        let _ = SetTextColor(ctx.hdc, COLORREF(text_color.to_colorref()));
         let _ = DrawTextW(
-            hdc,
+            ctx.hdc,
             &mut text_wide,
             &mut text_rect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
@@ -3431,15 +2950,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_selection_is_not_persisted_and_codex_is_always_enabled() {
+    fn provider_selection_is_not_persisted() {
         let settings = SettingsFile::default();
         let json = serde_json::to_string(&settings).unwrap();
 
         assert!(!json.contains("show_"));
-
-        let decoded: SettingsFile = serde_json::from_str(r#"{"show_codex":false}"#).unwrap();
-        assert!(!decoded.show_primary_code);
-        assert!(decoded.show_codex);
-        assert!(!decoded.show_secondary);
     }
 }

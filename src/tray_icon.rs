@@ -1,89 +1,32 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_WARNING,
-    NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_WARNING, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::native_interop::{self, Color, WM_APP_TRAY};
 
-const PRIMARY_TRAY_ICON_ID: u32 = 1;
-const CODEX_TRAY_ICON_ID: u32 = 2;
-const SECONDARY_TRAY_ICON_ID: u32 = 3;
+/// Stable notification-icon ID so the shell recognises the icon after an
+/// explorer.exe restart.
+pub const CODEX_TRAY_ICON_ID: u32 = 2;
 
 /// Menu item ID for toggling widget visibility (used by window.rs context menu).
 pub const IDM_TOGGLE_WIDGET: u16 = 70;
 
 /// Actions the tray message handler can request from the main window.
 pub enum TrayAction {
-    None,
+    Nothing,
     ToggleWidget,
     ShowContextMenu,
 }
 
-#[derive(Clone, Copy)]
-pub enum TrayIconKind {
-    Primary,
-    Codex,
-    Secondary,
-}
-
 pub struct TrayIconData {
-    pub kind: TrayIconKind,
     pub used_percent: Option<f64>,
     pub display_percent: Option<f64>,
     pub tooltip: String,
-}
-
-impl TrayIconKind {
-    fn id(self) -> u32 {
-        match self {
-            Self::Primary => PRIMARY_TRAY_ICON_ID,
-            Self::Codex => CODEX_TRAY_ICON_ID,
-            Self::Secondary => SECONDARY_TRAY_ICON_ID,
-        }
-    }
-}
-
-fn lerp_channel(start: u8, end: u8, t: f64) -> u8 {
-    (start as f64 + (end as f64 - start as f64) * t.clamp(0.0, 1.0)).round() as u8
-}
-
-fn lerp_color(start: Color, end: Color, t: f64) -> Color {
-    Color::new(
-        lerp_channel(start.r, end.r, t),
-        lerp_channel(start.g, end.g, t),
-        lerp_channel(start.b, end.b, t),
-    )
-}
-
-fn interpolated_fill(percent: f64) -> Color {
-    if percent <= 50.0 {
-        return Color::from_hex("#D97757");
-    }
-
-    let stops = [
-        (50.0, Color::from_hex("#D97757")),
-        (70.0, Color::from_hex("#D08540")),
-        (85.0, Color::from_hex("#CC8C20")),
-        (95.0, Color::from_hex("#C45020")),
-        (100.0, Color::from_hex("#B82020")),
-    ];
-
-    for pair in stops.windows(2) {
-        let (start_pct, start_color) = pair[0];
-        let (end_pct, end_color) = pair[1];
-        if percent <= end_pct {
-            let span = (end_pct - start_pct).max(f64::EPSILON);
-            let t = (percent - start_pct) / span;
-            return lerp_color(start_color, end_color, t);
-        }
-    }
-
-    stops[stops.len() - 1].1
 }
 
 fn codex_fill(percent: f64) -> Color {
@@ -94,70 +37,32 @@ fn codex_fill(percent: f64) -> Color {
     }
 }
 
-fn secondary_fill(percent: f64) -> Color {
-    if percent >= 90.0 {
-        Color::from_hex("#FFFFFF")
-    } else {
-        Color::from_hex("#4285F4")
-    }
-}
-
-/// Create a rounded-rectangle tray icon badge.
-/// `used_percent` controls risk colours while `display_percent` controls the badge text.
-/// For Primary, no display percentage uses the embedded app icon as the loading state.
-/// For Codex and Secondary, no display percentage uses a provider placeholder badge.
-pub fn create_icon(
-    kind: TrayIconKind,
-    used_percent: Option<f64>,
-    display_percent: Option<f64>,
-) -> HICON {
-    if matches!(kind, TrayIconKind::Primary) && display_percent.is_none() {
-        let app_icon = load_embedded_app_icon();
-        if !app_icon.is_invalid() {
-            return app_icon;
-        }
-    }
-
+/// Create a rounded-rectangle Codex tray icon badge.
+/// `used_percent` controls the fill colour (white near 90%, near-black below)
+/// while `display_percent` controls the badge text. When `display_percent`
+/// is `None`, the badge shows a placeholder "C" letter.
+pub fn create_icon(used_percent: Option<f64>, display_percent: Option<f64>) -> HICON {
     let size = 64_i32;
     let margin = 0_i32;
     let radius = 2_i32;
-    let outline = if matches!(kind, TrayIconKind::Codex | TrayIconKind::Secondary) {
-        3_i32
-    } else {
-        0_i32
-    };
+    let outline = 3_i32;
 
-    let fill = match kind {
-        TrayIconKind::Primary => interpolated_fill(used_percent.unwrap_or(0.0)),
-        TrayIconKind::Codex => codex_fill(used_percent.unwrap_or(0.0)),
-        TrayIconKind::Secondary => secondary_fill(used_percent.unwrap_or(0.0)),
+    let used = used_percent.unwrap_or(0.0);
+    let fill = codex_fill(used);
+    let text_col = if used >= 90.0 {
+        Color::from_hex("#111111")
+    } else {
+        Color::from_hex("#FFFFFF")
     };
-    let text_col = match kind {
-        TrayIconKind::Primary => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Codex if used_percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
-        TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Secondary if used_percent.unwrap_or(0.0) >= 90.0 => {
-            Color::from_hex("#1967D2")
-        }
-        TrayIconKind::Secondary => Color::from_hex("#FFFFFF"),
-    };
-    let outline_col = match kind {
-        TrayIconKind::Primary => fill,
-        TrayIconKind::Codex if used_percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
-        TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Secondary if used_percent.unwrap_or(0.0) >= 90.0 => {
-            Color::from_hex("#1967D2")
-        }
-        TrayIconKind::Secondary => Color::from_hex("#FFFFFF"),
+    let outline_col = if used >= 90.0 {
+        Color::from_hex("#111111")
+    } else {
+        Color::from_hex("#FFFFFF")
     };
 
     let display_text = match display_percent {
         Some(p) => format!("{}", p.round().clamp(0.0, 999.0) as u32),
-        None => match kind {
-            TrayIconKind::Primary => String::new(),
-            TrayIconKind::Codex => "C".to_string(),
-            TrayIconKind::Secondary => "A".to_string(),
-        },
+        None => "C".to_string(),
     };
 
     let font_h = match display_text.len() {
@@ -312,42 +217,14 @@ pub fn create_icon(
     }
 }
 
-fn load_embedded_app_icon() -> HICON {
-    unsafe {
-        let mut exe_buf = [0u16; 260];
-        let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
-        if len == 0 {
-            return HICON::default();
-        }
-
-        let mut small_icon = HICON::default();
-        let mut large_icon = HICON::default();
-        let extracted = ExtractIconExW(
-            PCWSTR::from_raw(exe_buf.as_ptr()),
-            0,
-            Some(&mut large_icon),
-            Some(&mut small_icon),
-            1,
-        );
-
-        if extracted == 0 {
-            HICON::default()
-        } else if !small_icon.is_invalid() {
-            small_icon
-        } else {
-            large_icon
-        }
-    }
-}
-
 /// Show a Windows balloon notification from the tray icon.
 /// Used to alert the user when re-authentication is required.
-pub fn notify_balloon(hwnd: HWND, kind: TrayIconKind, title: &str, message: &str) {
+pub fn notify_balloon(hwnd: HWND, title: &str, message: &str) {
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = kind.id();
+        nid.uID = CODEX_TRAY_ICON_ID;
         nid.uFlags = NIF_INFO;
         nid.dwInfoFlags = NIIF_WARNING;
         copy_wide(title, &mut nid.szInfoTitle);
@@ -370,19 +247,13 @@ fn copy_wide_256(s: &str, buf: &mut [u16; 256]) {
 }
 
 /// Register the tray icon with the shell.
-pub fn add(
-    hwnd: HWND,
-    kind: TrayIconKind,
-    used_percent: Option<f64>,
-    display_percent: Option<f64>,
-    tooltip: &str,
-) {
-    let hicon = create_icon(kind, used_percent, display_percent);
+pub fn add(hwnd: HWND, used_percent: Option<f64>, display_percent: Option<f64>, tooltip: &str) {
+    let hicon = create_icon(used_percent, display_percent);
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = kind.id();
+        nid.uID = CODEX_TRAY_ICON_ID;
         nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid.uCallbackMessage = WM_APP_TRAY;
         nid.hIcon = hicon;
@@ -395,19 +266,13 @@ pub fn add(
 }
 
 /// Update the tray icon colour and tooltip to reflect current usage.
-pub fn update(
-    hwnd: HWND,
-    kind: TrayIconKind,
-    used_percent: Option<f64>,
-    display_percent: Option<f64>,
-    tooltip: &str,
-) {
-    let hicon = create_icon(kind, used_percent, display_percent);
+pub fn update(hwnd: HWND, used_percent: Option<f64>, display_percent: Option<f64>, tooltip: &str) {
+    let hicon = create_icon(used_percent, display_percent);
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = kind.id();
+        nid.uID = CODEX_TRAY_ICON_ID;
         nid.uFlags = NIF_ICON | NIF_TIP;
         nid.hIcon = hicon;
         copy_to_tip(tooltip, &mut nid.szTip);
@@ -419,89 +284,20 @@ pub fn update(
 }
 
 /// Remove the tray icon from the shell.
-pub fn remove(hwnd: HWND, kind: TrayIconKind) {
+pub fn remove(hwnd: HWND) {
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = kind.id();
+        nid.uID = CODEX_TRAY_ICON_ID;
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
     }
 }
 
-pub fn sync(hwnd: HWND, icons: &[TrayIconData]) {
-    let show_primary = icons
-        .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Primary));
-    let show_codex = icons
-        .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Codex));
-    let show_secondary = icons
-        .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Secondary));
-
-    if let Some(icon) = show_primary {
-        add(
-            hwnd,
-            icon.kind,
-            icon.used_percent,
-            icon.display_percent,
-            &icon.tooltip,
-        );
-        update(
-            hwnd,
-            icon.kind,
-            icon.used_percent,
-            icon.display_percent,
-            &icon.tooltip,
-        );
-    } else {
-        remove(hwnd, TrayIconKind::Primary);
-    }
-
-    if let Some(icon) = show_codex {
-        add(
-            hwnd,
-            icon.kind,
-            icon.used_percent,
-            icon.display_percent,
-            &icon.tooltip,
-        );
-        update(
-            hwnd,
-            icon.kind,
-            icon.used_percent,
-            icon.display_percent,
-            &icon.tooltip,
-        );
-    } else {
-        remove(hwnd, TrayIconKind::Codex);
-    }
-
-    if let Some(icon) = show_secondary {
-        add(
-            hwnd,
-            icon.kind,
-            icon.used_percent,
-            icon.display_percent,
-            &icon.tooltip,
-        );
-        update(
-            hwnd,
-            icon.kind,
-            icon.used_percent,
-            icon.display_percent,
-            &icon.tooltip,
-        );
-    } else {
-        remove(hwnd, TrayIconKind::Secondary);
-    }
-}
-
-pub fn remove_all(hwnd: HWND) {
-    remove(hwnd, TrayIconKind::Primary);
-    remove(hwnd, TrayIconKind::Codex);
-    remove(hwnd, TrayIconKind::Secondary);
+/// Register (or re-register) the Codex tray icon with the shell.
+pub fn sync(hwnd: HWND, icon: &TrayIconData) {
+    add(hwnd, icon.used_percent, icon.display_percent, &icon.tooltip);
+    update(hwnd, icon.used_percent, icon.display_percent, &icon.tooltip);
 }
 
 /// Interpret a tray callback message and return the action to take.
@@ -510,7 +306,7 @@ pub fn handle_message(lparam: LPARAM) -> TrayAction {
     match mouse_msg {
         WM_LBUTTONUP => TrayAction::ToggleWidget,
         WM_RBUTTONUP => TrayAction::ShowContextMenu,
-        _ => TrayAction::None,
+        _ => TrayAction::Nothing,
     }
 }
 

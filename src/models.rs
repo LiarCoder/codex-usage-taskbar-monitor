@@ -32,13 +32,6 @@ pub struct UsageData {
     pub weekly: UsageSection,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct AppUsageData {
-    pub primary_code: Option<UsageData>,
-    pub codex: Option<UsageData>,
-    pub secondary: Option<UsageData>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

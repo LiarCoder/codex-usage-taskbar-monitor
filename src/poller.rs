@@ -1,16 +1,19 @@
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use std::os::windows::process::CommandExt;
 
 use crate::diagnose;
 use crate::localization::Strings;
-use crate::models::{AppUsageData, UsageData, UsageDisplayMode, UsageSection};
+use crate::models::{UsageData, UsageDisplayMode, UsageSection};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+static HTTP_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PollError {
@@ -19,15 +22,6 @@ pub enum PollError {
     TokenExpired,
     RequestFailed,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CredentialWatchMode {
-    ActiveSource,
-    AllSources,
-    Secondary,
-}
-
-pub type CredentialWatchSnapshot = Vec<String>;
 
 #[derive(Deserialize)]
 struct CodexAuthFile {
@@ -57,22 +51,28 @@ struct CodexRateLimitWindow {
     reset_at: i64,
 }
 
-pub fn poll(
-    _show_primary: bool,
-    show_codex: bool,
-    _show_secondary: bool,
-) -> Result<AppUsageData, PollError> {
-    if !show_codex {
-        return Err(PollError::RequestFailed);
+pub fn poll() -> Result<UsageData, PollError> {
+    let started = Instant::now();
+    diagnose::log("Codex usage poll started");
+
+    match poll_codex() {
+        Ok(usage) => {
+            diagnose::log(format!(
+                "Codex usage poll succeeded in {}ms: session={:.1}% weekly={:.1}%",
+                started.elapsed().as_millis(),
+                usage.session.percentage,
+                usage.weekly.percentage
+            ));
+            Ok(usage)
+        }
+        Err(error) => {
+            diagnose::log(format!(
+                "Codex usage poll failed in {}ms: {error:?}",
+                started.elapsed().as_millis()
+            ));
+            Err(error)
+        }
     }
-    let mut result = AppUsageData::default();
-    let usage = poll_codex()?;
-    diagnose::log(format!(
-        "Codex usage poll succeeded: session={:.1}% weekly={:.1}%",
-        usage.session.percentage, usage.weekly.percentage
-    ));
-    result.codex = Some(usage);
-    Ok(result)
 }
 
 fn poll_codex() -> Result<UsageData, PollError> {
@@ -93,6 +93,7 @@ fn poll_codex() -> Result<UsageData, PollError> {
 }
 
 fn cli_refresh_codex_token() {
+    let started = Instant::now();
     let codex_path = resolve_windows_codex_path();
     let is_cmd = codex_path.to_ascii_lowercase().ends_with(".cmd");
     let is_ps1 = codex_path.to_ascii_lowercase().ends_with(".ps1");
@@ -135,6 +136,10 @@ fn cli_refresh_codex_token() {
         }
     };
     wait_for_refresh(&mut child);
+    diagnose::log(format!(
+        "Windows Codex token refresh finished in {}ms",
+        started.elapsed().as_millis()
+    ));
 }
 
 fn wait_for_refresh(child: &mut std::process::Child) {
@@ -167,16 +172,25 @@ fn resolve_windows_codex_path() -> String {
     "codex.cmd".to_string()
 }
 
-fn build_agent() -> Result<ureq::Agent, PollError> {
+fn build_agent() -> Result<&'static ureq::Agent, PollError> {
+    if let Some(agent) = HTTP_AGENT.get() {
+        return Ok(agent);
+    }
+
     let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
-    Ok(ureq::AgentBuilder::new()
+    let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
         .tls_connector(std::sync::Arc::new(tls))
-        .build())
+        .build();
+    let _ = HTTP_AGENT.set(agent);
+
+    Ok(HTTP_AGENT
+        .get()
+        .expect("HTTP agent is initialized before use"))
 }
 
-pub fn credential_watch_snapshot(_mode: CredentialWatchMode) -> CredentialWatchSnapshot {
-    vec![codex_credential_signature()]
+pub fn credential_watch_snapshot() -> String {
+    codex_credential_signature()
 }
 
 fn codex_credential_signature() -> String {
@@ -204,14 +218,31 @@ fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<UsageData,
         request = request.set("ChatGPT-Account-Id", account_id);
     }
 
+    let request_started = Instant::now();
     let response = match request.call() {
-        Ok(response) => response,
+        Ok(response) => {
+            diagnose::log(format!(
+                "Codex usage endpoint responded with {} in {}ms",
+                response.status(),
+                request_started.elapsed().as_millis()
+            ));
+            response
+        }
         Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            diagnose::log(format!("Codex usage endpoint returned auth status {code}"));
+            diagnose::log(format!(
+                "Codex usage endpoint returned auth status {code} in {}ms",
+                request_started.elapsed().as_millis()
+            ));
             return Err(PollError::AuthRequired);
         }
         Err(error) => {
-            diagnose::log_error("Codex usage endpoint request failed", error);
+            diagnose::log_error(
+                &format!(
+                    "Codex usage endpoint request failed in {}ms",
+                    request_started.elapsed().as_millis()
+                ),
+                error,
+            );
             return Err(PollError::RequestFailed);
         }
     };
@@ -325,10 +356,6 @@ pub fn is_past_reset(data: &UsageData) -> bool {
         .into_iter()
         .flatten()
         .any(|reset| now.duration_since(reset).is_ok())
-}
-
-pub fn app_is_past_reset(data: &AppUsageData) -> bool {
-    data.codex.as_ref().is_some_and(is_past_reset)
 }
 
 #[cfg(test)]
