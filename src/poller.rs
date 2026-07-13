@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use std::os::windows::process::CommandExt;
@@ -52,12 +52,27 @@ struct CodexRateLimitWindow {
 }
 
 pub fn poll() -> Result<UsageData, PollError> {
-    let usage = poll_codex()?;
-    diagnose::log(format!(
-        "Codex usage poll succeeded: session={:.1}% weekly={:.1}%",
-        usage.session.percentage, usage.weekly.percentage
-    ));
-    Ok(usage)
+    let started = Instant::now();
+    diagnose::log("Codex usage poll started");
+
+    match poll_codex() {
+        Ok(usage) => {
+            diagnose::log(format!(
+                "Codex usage poll succeeded in {}ms: session={:.1}% weekly={:.1}%",
+                started.elapsed().as_millis(),
+                usage.session.percentage,
+                usage.weekly.percentage
+            ));
+            Ok(usage)
+        }
+        Err(error) => {
+            diagnose::log(format!(
+                "Codex usage poll failed in {}ms: {error:?}",
+                started.elapsed().as_millis()
+            ));
+            Err(error)
+        }
+    }
 }
 
 fn poll_codex() -> Result<UsageData, PollError> {
@@ -78,6 +93,7 @@ fn poll_codex() -> Result<UsageData, PollError> {
 }
 
 fn cli_refresh_codex_token() {
+    let started = Instant::now();
     let codex_path = resolve_windows_codex_path();
     let is_cmd = codex_path.to_ascii_lowercase().ends_with(".cmd");
     let is_ps1 = codex_path.to_ascii_lowercase().ends_with(".ps1");
@@ -120,6 +136,10 @@ fn cli_refresh_codex_token() {
         }
     };
     wait_for_refresh(&mut child);
+    diagnose::log(format!(
+        "Windows Codex token refresh finished in {}ms",
+        started.elapsed().as_millis()
+    ));
 }
 
 fn wait_for_refresh(child: &mut std::process::Child) {
@@ -198,14 +218,31 @@ fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<UsageData,
         request = request.set("ChatGPT-Account-Id", account_id);
     }
 
+    let request_started = Instant::now();
     let response = match request.call() {
-        Ok(response) => response,
+        Ok(response) => {
+            diagnose::log(format!(
+                "Codex usage endpoint responded with {} in {}ms",
+                response.status(),
+                request_started.elapsed().as_millis()
+            ));
+            response
+        }
         Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            diagnose::log(format!("Codex usage endpoint returned auth status {code}"));
+            diagnose::log(format!(
+                "Codex usage endpoint returned auth status {code} in {}ms",
+                request_started.elapsed().as_millis()
+            ));
             return Err(PollError::AuthRequired);
         }
         Err(error) => {
-            diagnose::log_error("Codex usage endpoint request failed", error);
+            diagnose::log_error(
+                &format!(
+                    "Codex usage endpoint request failed in {}ms",
+                    request_started.elapsed().as_millis()
+                ),
+                error,
+            );
             return Err(PollError::RequestFailed);
         }
     };
