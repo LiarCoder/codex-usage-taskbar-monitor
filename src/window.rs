@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
-use crate::models::{AppUsageData, UsageDisplayMode};
+use crate::models::{UsageData, UsageDisplayMode};
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
     WM_APP_USAGE_UPDATED,
@@ -55,9 +55,7 @@ struct AppState {
     language: LanguageId,
     install_channel: InstallChannel,
 
-    /// Codex 5h-window usage (was `codex_session_percent` before the
-    /// primary/secondary slots were removed; now the single provider's
-    /// data lives directly under `session_*` / `weekly_*`).
+    /// Codex 5h-window usage.
     session_percent: f64,
     session_text: String,
     /// Codex 7d-window usage.
@@ -66,13 +64,13 @@ struct AppState {
 
     usage_display: UsageDisplayMode,
 
-    data: Option<AppUsageData>,
+    data: Option<UsageData>,
 
     poll_interval_ms: u32,
     retry_count: u32,
     force_notify_auth_error: bool,
     auth_error_paused_polling: bool,
-    auth_watch_snapshot: poller::CredentialWatchSnapshot,
+    auth_watch_snapshot: String,
     last_poll_ok: bool,
     update_status: UpdateStatus,
     last_update_check_unix: Option<u64>,
@@ -1188,7 +1186,7 @@ pub fn run() {
                 retry_count: 0,
                 force_notify_auth_error: false,
                 auth_error_paused_polling: false,
-                auth_watch_snapshot: Vec::new(),
+                auth_watch_snapshot: String::new(),
                 last_poll_ok: false,
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
@@ -1576,13 +1574,10 @@ fn do_poll(send_hwnd: SendHwnd) {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
-                // The poller returns the Codex `UsageData` directly via the
-                // `AppUsageData` type alias, so the data field is the
-                // Codex payload itself.
                 s.session_percent = data.session.percentage;
                 s.weekly_percent = data.weekly.percentage;
                 // Stop fast-poll if reset data is now fresh
-                if !poller::app_is_past_reset(&data) {
+                if !poller::is_past_reset(&data) {
                     unsafe {
                         let _ = KillTimer(hwnd, TIMER_RESET_POLL);
                     }
@@ -1610,10 +1605,6 @@ fn do_poll(send_hwnd: SendHwnd) {
             }
         }
         Err(e) => {
-            // In the Codex-only build there is only one credential source to
-            // watch (auth.json), so we no longer dispatch on the error
-            // variant: anything that isn't a transient network failure
-            // becomes an auth-watch pause and a balloon notification.
             let auth_watch = match e {
                 poller::PollError::RequestFailed => None,
                 _ => Some(poller::credential_watch_snapshot()),
@@ -1636,8 +1627,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_watch_snapshot = watch_snapshot;
                             s.session_text = "!".to_string();
                             s.weekly_text = "!".to_string();
-                            s.session_text = "!".to_string();
-                            s.weekly_text = "!".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
@@ -1651,8 +1640,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = false;
                             s.auth_watch_snapshot.clear();
-                            s.session_text = "...".to_string();
-                            s.weekly_text = "...".to_string();
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
@@ -1674,8 +1661,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                 let balloon = {
                     let state = lock_state();
                     state.as_ref().map(|s| {
-                        // Codex-only build: always notify on the Codex
-                        // tray icon.
                         (
                             s.language.strings(),
                             s.language.strings().codex_token_expired_title,
@@ -1717,7 +1702,7 @@ fn schedule_countdown_timer() {
     };
 
     // If a reset time has passed, poll every 5s to pick up fresh data
-    if poller::app_is_past_reset(data) {
+    if poller::is_past_reset(data) {
         unsafe {
             SetTimer(hwnd, TIMER_RESET_POLL, 5_000, None);
         }
@@ -1986,11 +1971,6 @@ unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    // In the Codex-only build there is exactly one
-                    // watchable credential source, so the timer only
-                    // cares about the paused flag and the previous
-                    // snapshot. If the snapshot changed the user has
-                    // edited auth.json, so retry the poll immediately.
                     let watch = {
                         let state = lock_state();
                         state
@@ -2426,7 +2406,7 @@ unsafe extern "system" fn wnd_proc(
             if let Some(h) = hook {
                 native_interop::unhook_win_event(h);
             }
-            tray_icon::remove_all(hwnd);
+            tray_icon::remove(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -2972,12 +2952,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_selection_is_not_persisted_and_codex_is_always_enabled() {
+    fn provider_selection_is_not_persisted() {
         let settings = SettingsFile::default();
         let json = serde_json::to_string(&settings).unwrap();
 
         assert!(!json.contains("show_"));
-        // show_* fields no longer exist — Codex is always the sole provider
-        assert!(true);
     }
 }

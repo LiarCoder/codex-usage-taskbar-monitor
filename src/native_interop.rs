@@ -195,11 +195,6 @@ pub struct Color {
 }
 
 impl Color {
-    #[allow(dead_code)]
-    pub const fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
-    }
-
     pub fn from_hex(hex: &str) -> Self {
         let hex = hex.trim_start_matches('#');
         let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);

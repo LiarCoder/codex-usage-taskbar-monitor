@@ -7,7 +7,7 @@ use std::os::windows::process::CommandExt;
 
 use crate::diagnose;
 use crate::localization::Strings;
-use crate::models::{AppUsageData, UsageData, UsageDisplayMode, UsageSection};
+use crate::models::{UsageData, UsageDisplayMode, UsageSection};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -19,8 +19,6 @@ pub enum PollError {
     TokenExpired,
     RequestFailed,
 }
-
-pub type CredentialWatchSnapshot = Vec<String>;
 
 #[derive(Deserialize)]
 struct CodexAuthFile {
@@ -159,8 +157,8 @@ fn build_agent() -> Result<ureq::Agent, PollError> {
         .build())
 }
 
-pub fn credential_watch_snapshot() -> CredentialWatchSnapshot {
-    vec![codex_credential_signature()]
+pub fn credential_watch_snapshot() -> String {
+    codex_credential_signature()
 }
 
 fn codex_credential_signature() -> String {
@@ -309,10 +307,6 @@ pub fn is_past_reset(data: &UsageData) -> bool {
         .into_iter()
         .flatten()
         .any(|reset| now.duration_since(reset).is_ok())
-}
-
-pub fn app_is_past_reset(data: &AppUsageData) -> bool {
-    is_past_reset(data)
 }
 
 #[cfg(test)]

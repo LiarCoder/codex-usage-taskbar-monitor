@@ -32,12 +32,6 @@ pub struct UsageData {
     pub weekly: UsageSection,
 }
 
-/// Codex is the only supported provider, so the app-level usage payload is
-/// just a `UsageData` alias. This used to be a struct with one `Option<UsageData>`
-/// field per provider (primary / codex / secondary) before the multi-provider
-/// UI was removed.
-pub type AppUsageData = UsageData;
-
 #[cfg(test)]
 mod tests {
     use super::*;

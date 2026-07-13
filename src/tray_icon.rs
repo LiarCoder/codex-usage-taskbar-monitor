@@ -9,11 +9,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::native_interop::{self, Color, WM_APP_TRAY};
 
-/// Stable notification-icon ID for the Codex tray icon. Held over from the
-/// pre-codex-only build where multiple providers each got their own slot
-/// (Primary = 1, Codex = 2, Secondary = 3). We keep the original value so
-/// the shell recognises this as the "same" icon when it gets re-registered
-/// after an explorer.exe restart.
+/// Stable notification-icon ID so the shell recognises the icon after an
+/// explorer.exe restart.
 pub const CODEX_TRAY_ICON_ID: u32 = 2;
 
 /// Menu item ID for toggling widget visibility (used by window.rs context menu).
@@ -297,18 +294,10 @@ pub fn remove(hwnd: HWND) {
     }
 }
 
-/// Register (or re-register) the single Codex tray icon with the shell.
-///
-/// In the pre-codex-only build this was `sync(hwnd, &[TrayIconData])` with
-/// one entry per provider; the codex-only build has a single icon, so we
-/// just add+update in one call.
+/// Register (or re-register) the Codex tray icon with the shell.
 pub fn sync(hwnd: HWND, icon: &TrayIconData) {
     add(hwnd, icon.used_percent, icon.display_percent, &icon.tooltip);
     update(hwnd, icon.used_percent, icon.display_percent, &icon.tooltip);
-}
-
-pub fn remove_all(hwnd: HWND) {
-    remove(hwnd);
 }
 
 /// Interpret a tray callback message and return the action to take.
