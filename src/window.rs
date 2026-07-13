@@ -444,94 +444,34 @@ fn save_state_settings() {
     }
 }
 
-fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
+fn tray_icon_data_from_state() -> Option<tray_icon::TrayIconData> {
     let state = lock_state();
     match state.as_ref() {
-        Some(s) if s.last_poll_ok => {
-            let mut icons = Vec::new();
-            if s.show_primary_code {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Primary,
-                    used_percent: Some(s.session_percent),
-                    display_percent: Some(
-                        s.display_percentage(s.session_percent, s.primary_code_usage_available()),
-                    ),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
-                        s.language.strings().codex_model,
-                        s.session_text,
-                        s.weekly_text
-                    ),
-                });
-            }
-            if s.show_codex {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Codex,
-                    used_percent: Some(s.codex_session_percent),
-                    display_percent: Some(
-                        s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
-                    ),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
-                        s.language.strings().codex_model,
-                        s.codex_session_text,
-                        s.codex_weekly_text
-                    ),
-                });
-            }
-            if s.show_secondary {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Secondary,
-                    used_percent: Some(s.secondary_session_percent),
-                    display_percent: Some(s.display_percentage(
-                        s.secondary_session_percent,
-                        s.secondary_usage_available(),
-                    )),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
-                        s.language.strings().codex_model,
-                        s.secondary_session_text,
-                        s.secondary_weekly_text
-                    ),
-                });
-            }
-            icons
-        }
-        Some(s) => {
-            let mut icons = Vec::new();
-            if s.show_primary_code {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Primary,
-                    used_percent: None,
-                    display_percent: None,
-                    tooltip: s.language.strings().window_title.to_string(),
-                });
-            }
-            if s.show_codex {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Codex,
-                    used_percent: None,
-                    display_percent: None,
-                    tooltip: s.language.strings().window_title.to_string(),
-                });
-            }
-            if s.show_secondary {
-                icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Secondary,
-                    used_percent: None,
-                    display_percent: None,
-                    tooltip: s.language.strings().window_title.to_string(),
-                });
-            }
-            icons
-        }
-        None => Vec::new(),
+        Some(s) if s.last_poll_ok => Some(tray_icon::TrayIconData {
+            used_percent: Some(s.codex_session_percent),
+            display_percent: Some(
+                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
+            ),
+            tooltip: format!(
+                "{} 5h: {} | 7d: {}",
+                s.language.strings().codex_model,
+                s.codex_session_text,
+                s.codex_weekly_text
+            ),
+        }),
+        Some(s) => Some(tray_icon::TrayIconData {
+            used_percent: None,
+            display_percent: None,
+            tooltip: s.language.strings().window_title.to_string(),
+        }),
+        None => None,
     }
 }
 
 fn sync_tray_icons(hwnd: HWND) {
-    let icons = tray_icon_data_from_state();
-    tray_icon::sync(hwnd, &icons);
+    if let Some(icon) = tray_icon_data_from_state() {
+        tray_icon::sync(hwnd, &icon);
+    }
 }
 
 fn toggle_widget_visibility(hwnd: HWND) {
@@ -1929,7 +1869,7 @@ fn do_poll(send_hwnd: SendHwnd) {
                     })
                 };
                 if let Some((_strings, title, body)) = balloon {
-                    tray_icon::notify_balloon(hwnd, tray_icon::TrayIconKind::Codex, title, body);
+                    tray_icon::notify_balloon(hwnd, title, body);
                 }
             }
 
@@ -2659,7 +2599,7 @@ unsafe extern "system" fn wnd_proc(
                 tray_icon::TrayAction::ShowContextMenu => {
                     show_context_menu(hwnd);
                 }
-                tray_icon::TrayAction::None => {}
+                tray_icon::TrayAction::Nothing => {}
             }
             LRESULT(0)
         }
