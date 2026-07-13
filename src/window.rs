@@ -2232,8 +2232,6 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.session_text = "...".to_string();
-                            s.weekly_text = "...".to_string();
                             s.force_notify_auth_error = true;
                         }
                     }
