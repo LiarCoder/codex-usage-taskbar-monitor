@@ -1044,7 +1044,7 @@ fn total_widget_width() -> i32 {
     total_widget_width_for(active_models, compact_mode)
 }
 
-fn codex_accent_color(is_dark: bool) -> Color {
+fn accent_color(is_dark: bool) -> Color {
     if is_dark {
         Color::from_hex("#F5F5F5")
     } else {
@@ -1329,7 +1329,7 @@ fn render_layered() {
     let width = total_widget_width();
     let height = sc(WIDGET_HEIGHT);
 
-    let codex_accent = codex_accent_color(is_dark);
+    let codex_accent = accent_color(is_dark);
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -2725,7 +2725,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         }
     };
 
-    let codex_accent = codex_accent_color(is_dark);
+    let codex_accent = accent_color(is_dark);
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
