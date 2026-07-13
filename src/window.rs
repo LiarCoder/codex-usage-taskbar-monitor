@@ -55,21 +55,15 @@ struct AppState {
     language: LanguageId,
     install_channel: InstallChannel,
 
+    /// Codex 5h-window usage (was `codex_session_percent` before the
+    /// primary/secondary slots were removed; now the single provider's
+    /// data lives directly under `session_*` / `weekly_*`).
     session_percent: f64,
     session_text: String,
+    /// Codex 7d-window usage.
     weekly_percent: f64,
     weekly_text: String,
-    codex_session_percent: f64,
-    codex_session_text: String,
-    codex_weekly_percent: f64,
-    codex_weekly_text: String,
-    secondary_session_percent: f64,
-    secondary_session_text: String,
-    secondary_weekly_percent: f64,
-    secondary_weekly_text: String,
-    show_primary_code: bool,
-    show_codex: bool,
-    show_secondary: bool,
+
     usage_display: UsageDisplayMode,
 
     data: Option<AppUsageData>,
@@ -99,25 +93,8 @@ impl AppState {
         display_percentage_for_availability(self.usage_display, used_percentage, available)
     }
 
-    fn primary_code_usage_available(&self) -> bool {
-        // primary_code is no longer populated by the poller; treated as
-        // permanently unavailable so the corresponding fields stay hidden.
-        false
-    }
-
     fn codex_usage_available(&self) -> bool {
-        // Codex is the only supported provider, so the data field is the
-        // Codex payload itself (via the `AppUsageData = UsageData` alias).
         self.data.is_some()
-    }
-
-    fn secondary_usage_available(&self) -> bool {
-        // secondary is no longer populated by the poller.
-        false
-    }
-
-    fn secondary_weekly_usage_available(&self) -> bool {
-        false
     }
 }
 
@@ -353,12 +330,6 @@ struct SettingsFile {
     widget_visible: bool,
     #[serde(default)]
     compact_mode: bool,
-    #[serde(skip, default = "default_show_primary_code")]
-    show_primary_code: bool,
-    #[serde(skip, default = "default_show_codex")]
-    show_codex: bool,
-    #[serde(skip, default = "default_show_secondary")]
-    show_secondary: bool,
     #[serde(default)]
     usage_display: UsageDisplayMode,
 }
@@ -373,9 +344,6 @@ impl Default for SettingsFile {
             last_update_check_unix: None,
             widget_visible: true,
             compact_mode: false,
-            show_primary_code: false,
-            show_codex: true,
-            show_secondary: false,
             usage_display: UsageDisplayMode::Used,
         }
     }
@@ -389,28 +357,12 @@ fn default_widget_visible() -> bool {
     true
 }
 
-fn default_show_primary_code() -> bool {
-    false
-}
-
-fn default_show_codex() -> bool {
-    true
-}
-
-fn default_show_secondary() -> bool {
-    false
-}
-
 fn load_settings() -> SettingsFile {
     let content = match std::fs::read_to_string(settings_path()) {
         Ok(c) => c,
         Err(_) => return SettingsFile::default(),
     };
-    let mut settings: SettingsFile = serde_json::from_str(&content).unwrap_or_default();
-    settings.show_primary_code = false;
-    settings.show_codex = true;
-    settings.show_secondary = false;
-    settings
+    serde_json::from_str(&content).unwrap_or_default()
 }
 
 fn save_settings(settings: &SettingsFile) {
@@ -436,9 +388,6 @@ fn save_state_settings() {
             last_update_check_unix: s.last_update_check_unix,
             widget_visible: s.widget_visible,
             compact_mode: s.compact_mode,
-            show_primary_code: s.show_primary_code,
-            show_codex: s.show_codex,
-            show_secondary: s.show_secondary,
             usage_display: s.usage_display,
         });
     }
@@ -448,15 +397,15 @@ fn tray_icon_data_from_state() -> Option<tray_icon::TrayIconData> {
     let state = lock_state();
     match state.as_ref() {
         Some(s) if s.last_poll_ok => Some(tray_icon::TrayIconData {
-            used_percent: Some(s.codex_session_percent),
+            used_percent: Some(s.session_percent),
             display_percent: Some(
-                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
+                s.display_percentage(s.session_percent, s.codex_usage_available()),
             ),
             tooltip: format!(
                 "{} 5h: {} | 7d: {}",
                 s.language.strings().codex_model,
-                s.codex_session_text,
-                s.codex_weekly_text
+                s.session_text,
+                s.weekly_text
             ),
         }),
         Some(s) => Some(tray_icon::TrayIconData {
@@ -649,8 +598,8 @@ fn refresh_usage_texts(state: &mut AppState) {
     // Codex is the only supported provider, so the `data` value itself
     // is the Codex payload. The legacy `primary_code` / `secondary` slots
     // are no longer populated by the poller and have nothing to render.
-    state.codex_session_text = poller::format_line(&data.session, strings, state.usage_display);
-    state.codex_weekly_text = poller::format_line(&data.weekly, strings, state.usage_display);
+    state.session_text = poller::format_line(&data.session, strings, state.usage_display);
+    state.weekly_text = poller::format_line(&data.weekly, strings, state.usage_display);
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1058,16 +1007,8 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
     }
 }
 
-fn active_model_count(show_primary_code: bool, show_codex: bool, show_secondary: bool) -> i32 {
-    (show_primary_code as i32 + show_codex as i32 + show_secondary as i32).max(1)
-}
-
-fn row_bar_segment_count(active_models: i32) -> i32 {
-    match active_models {
-        1 => SEGMENT_COUNT,
-        2 => 5,
-        _ => 4,
-    }
+fn row_bar_segment_count(_active_models: i32) -> i32 {
+    SEGMENT_COUNT
 }
 
 fn total_widget_width_for(active_models: i32, compact_mode: bool) -> i32 {
@@ -1084,14 +1025,7 @@ fn total_widget_width_for(active_models: i32, compact_mode: bool) -> i32 {
 }
 
 fn total_widget_width_for_state(state: &AppState) -> i32 {
-    total_widget_width_for(
-        active_model_count(
-            state.show_primary_code,
-            state.show_codex,
-            state.show_secondary,
-        ),
-        state.compact_mode,
-    )
+    total_widget_width_for(1 /* codex-only */, state.compact_mode)
 }
 
 fn total_widget_width() -> i32 {
@@ -1101,7 +1035,7 @@ fn total_widget_width() -> i32 {
             .as_ref()
             .map(|s| {
                 (
-                    active_model_count(s.show_primary_code, s.show_codex, s.show_secondary),
+                    1, // codex-only
                     s.compact_mode,
                 )
             })
@@ -1110,43 +1044,11 @@ fn total_widget_width() -> i32 {
     total_widget_width_for(active_models, compact_mode)
 }
 
-fn primary_accent_color() -> Color {
-    Color::from_hex("#D97757")
-}
-
 fn codex_accent_color(is_dark: bool) -> Color {
     if is_dark {
         Color::from_hex("#F5F5F5")
     } else {
         Color::from_hex("#1F1F1F")
-    }
-}
-
-fn secondary_accent_color() -> Color {
-    Color::from_hex("#4285F4")
-}
-
-fn primary_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#F09A7A")
-    } else {
-        Color::from_hex("#A94F32")
-    }
-}
-
-fn codex_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#F5F5F5")
-    } else {
-        Color::from_hex("#1F1F1F")
-    }
-}
-
-fn secondary_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#8AB4F8")
-    } else {
-        Color::from_hex("#1967D2")
     }
 }
 
@@ -1225,11 +1127,7 @@ pub fn run() {
 
         // Create as layered popup (will be reparented into taskbar)
         let title = native_interop::wide_str(language.strings().window_title);
-        let initial_model_count = active_model_count(
-            settings.show_primary_code,
-            settings.show_codex,
-            settings.show_secondary,
-        );
+        let initial_model_count = 1; // codex-only
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
             PCWSTR::from_raw(class_name.as_ptr()),
@@ -1284,17 +1182,6 @@ pub fn run() {
                 session_text: "--".to_string(),
                 weekly_percent: 0.0,
                 weekly_text: "--".to_string(),
-                codex_session_percent: 0.0,
-                codex_session_text: "--".to_string(),
-                codex_weekly_percent: 0.0,
-                codex_weekly_text: "--".to_string(),
-                secondary_session_percent: 0.0,
-                secondary_session_text: "--".to_string(),
-                secondary_weekly_percent: 0.0,
-                secondary_weekly_text: "--".to_string(),
-                show_primary_code: settings.show_primary_code,
-                show_codex: settings.show_codex,
-                show_secondary: settings.show_secondary,
                 usage_display: settings.usage_display,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -1406,21 +1293,10 @@ fn render_layered() {
         is_dark,
         embedded,
         strings,
-        session_pct,
-        session_text,
-        weekly_pct,
-        weekly_text,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
-        secondary_session_pct,
-        secondary_session_text,
-        secondary_weekly_pct,
-        secondary_weekly_text,
-        show_primary_code,
-        show_codex,
-        show_secondary,
         compact_mode,
     ) = {
         let state = lock_state();
@@ -1430,24 +1306,10 @@ fn render_layered() {
                 s.is_dark,
                 s.embedded,
                 s.language.strings(),
-                s.display_percentage(s.session_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.session_percent, s.codex_usage_available()),
                 s.session_text.clone(),
-                s.display_percentage(s.weekly_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.weekly_percent, s.codex_usage_available()),
                 s.weekly_text.clone(),
-                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
-                s.codex_session_text.clone(),
-                s.display_percentage(s.codex_weekly_percent, s.codex_usage_available()),
-                s.codex_weekly_text.clone(),
-                s.display_percentage(s.secondary_session_percent, s.secondary_usage_available()),
-                s.secondary_session_text.clone(),
-                s.display_percentage(
-                    s.secondary_weekly_percent,
-                    s.secondary_weekly_usage_available(),
-                ),
-                s.secondary_weekly_text.clone(),
-                s.show_primary_code,
-                s.show_codex,
-                s.show_secondary,
                 s.compact_mode,
             ),
             None => return,
@@ -1467,9 +1329,7 @@ fn render_layered() {
     let width = total_widget_width();
     let height = sc(WIDGET_HEIGHT);
 
-    let accent = primary_accent_color();
     let codex_accent = codex_accent_color(is_dark);
-    let secondary_accent = secondary_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -1526,27 +1386,14 @@ fn render_layered() {
             is_dark,
             &bg_color,
             &text_color,
-            &accent,
+            &codex_accent,
             &track,
             strings,
-            session_pct,
-            &session_text,
-            weekly_pct,
-            &weekly_text,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
-            secondary_session_pct,
-            &secondary_session_text,
-            secondary_weekly_pct,
-            &secondary_weekly_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
             compact_mode,
-            &codex_accent,
-            &secondary_accent,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1610,20 +1457,7 @@ fn paint_content(
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
-    codex_session_pct: f64,
-    codex_session_text: &str,
-    codex_weekly_pct: f64,
-    codex_weekly_text: &str,
-    secondary_session_pct: f64,
-    secondary_session_text: &str,
-    secondary_weekly_pct: f64,
-    secondary_weekly_text: &str,
-    show_primary_code: bool,
-    show_codex: bool,
-    show_secondary: bool,
     compact_mode: bool,
-    codex_accent: &Color,
-    secondary_accent: &Color,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1700,6 +1534,7 @@ fn paint_content(
         );
         let old_font = SelectObject(hdc, font);
 
+        // Session row (5h window)
         draw_row(
             hdc,
             content_x,
@@ -1709,19 +1544,11 @@ fn paint_content(
             strings.session_window,
             session_pct,
             session_text,
-            codex_session_pct,
-            codex_session_text,
-            secondary_session_pct,
-            secondary_session_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
             compact_mode,
             accent,
-            codex_accent,
-            secondary_accent,
             track,
         );
+        // Weekly row (7d window)
         draw_row(
             hdc,
             content_x,
@@ -1731,17 +1558,8 @@ fn paint_content(
             strings.weekly_window,
             weekly_pct,
             weekly_text,
-            codex_weekly_pct,
-            codex_weekly_text,
-            secondary_weekly_pct,
-            secondary_weekly_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
             compact_mode,
             accent,
-            codex_accent,
-            secondary_accent,
             track,
         );
 
@@ -1760,8 +1578,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                 // The poller returns the Codex `UsageData` directly via the
                 // `AppUsageData` type alias, so the data field is the
                 // Codex payload itself.
-                s.codex_session_percent = data.session.percentage;
-                s.codex_weekly_percent = data.weekly.percentage;
+                s.session_percent = data.session.percentage;
+                s.weekly_percent = data.weekly.percentage;
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
                     unsafe {
@@ -1817,10 +1635,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_watch_snapshot = watch_snapshot;
                             s.session_text = "!".to_string();
                             s.weekly_text = "!".to_string();
-                            s.codex_session_text = "!".to_string();
-                            s.codex_weekly_text = "!".to_string();
-                            s.secondary_session_text = "!".to_string();
-                            s.secondary_weekly_text = "!".to_string();
+                            s.session_text = "!".to_string();
+                            s.weekly_text = "!".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
@@ -1836,10 +1652,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_watch_snapshot.clear();
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
-                            s.codex_weekly_text = "...".to_string();
-                            s.secondary_session_text = "...".to_string();
-                            s.secondary_weekly_text = "...".to_string();
+                            s.session_text = "...".to_string();
+                            s.weekly_text = "...".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
@@ -2437,8 +2251,8 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
-                            s.codex_weekly_text = "...".to_string();
+                            s.session_text = "...".to_string();
+                            s.weekly_text = "...".to_string();
                             s.force_notify_auth_error = true;
                         }
                     }
@@ -2889,21 +2703,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let (
         is_dark,
         strings,
-        session_pct,
-        session_text,
-        weekly_pct,
-        weekly_text,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
-        secondary_session_pct,
-        secondary_session_text,
-        secondary_weekly_pct,
-        secondary_weekly_text,
-        show_primary_code,
-        show_codex,
-        show_secondary,
         compact_mode,
     ) = {
         let state = lock_state();
@@ -2911,33 +2714,17 @@ fn paint(hdc: HDC, hwnd: HWND) {
             Some(s) => (
                 s.is_dark,
                 s.language.strings(),
-                s.display_percentage(s.session_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.session_percent, s.codex_usage_available()),
                 s.session_text.clone(),
-                s.display_percentage(s.weekly_percent, s.primary_code_usage_available()),
+                s.display_percentage(s.weekly_percent, s.codex_usage_available()),
                 s.weekly_text.clone(),
-                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
-                s.codex_session_text.clone(),
-                s.display_percentage(s.codex_weekly_percent, s.codex_usage_available()),
-                s.codex_weekly_text.clone(),
-                s.display_percentage(s.secondary_session_percent, s.secondary_usage_available()),
-                s.secondary_session_text.clone(),
-                s.display_percentage(
-                    s.secondary_weekly_percent,
-                    s.secondary_weekly_usage_available(),
-                ),
-                s.secondary_weekly_text.clone(),
-                s.show_primary_code,
-                s.show_codex,
-                s.show_secondary,
                 s.compact_mode,
             ),
             None => return,
         }
     };
 
-    let accent = primary_accent_color();
     let codex_accent = codex_accent_color(is_dark);
-    let secondary_accent = secondary_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -2975,27 +2762,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
             is_dark,
             &bg_color,
             &text_color,
-            &accent,
+            &codex_accent,
             &track,
             strings,
-            session_pct,
-            &session_text,
-            weekly_pct,
-            &weekly_text,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
-            secondary_session_pct,
-            &secondary_session_text,
-            secondary_weekly_pct,
-            &secondary_weekly_text,
-            show_primary_code,
-            show_codex,
-            show_secondary,
             compact_mode,
-            &codex_accent,
-            &secondary_accent,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -3010,43 +2784,19 @@ fn draw_row(
     hdc: HDC,
     x: i32,
     y: i32,
-    is_dark: bool,
+    _is_dark: bool,
     text_color: &Color,
     label: &str,
-    primary_percent: f64,
-    primary_text: &str,
-    codex_percent: f64,
-    codex_text: &str,
-    secondary_percent: f64,
-    secondary_text: &str,
-    show_primary_code: bool,
-    show_codex: bool,
-    show_secondary: bool,
+    percent: f64,
+    bar_text: &str,
     compact_mode: bool,
-    primary_accent: &Color,
-    codex_accent: &Color,
-    secondary_accent: &Color,
+    accent_color: &Color,
     track: &Color,
 ) {
     let seg_h = sc(SEGMENT_H);
-    let active_models = active_model_count(show_primary_code, show_codex, show_secondary);
-    let segment_count = row_bar_segment_count(active_models);
-    let use_model_text_colors = active_models > 1;
-    let primary_value_color = if use_model_text_colors {
-        primary_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let codex_value_color = if use_model_text_colors {
-        codex_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let secondary_value_color = if use_model_text_colors {
-        secondary_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
+    let segment_count = SEGMENT_COUNT;
+    // codex-only: always use the generic text color
+    let value_color = *text_color;
 
     unsafe {
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -3064,51 +2814,19 @@ fn draw_row(
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         );
 
-        let mut model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
-        if show_primary_code {
-            draw_usage_bar(
-                hdc,
-                model_x,
-                y,
-                segment_count,
-                primary_percent,
-                primary_text,
-                primary_accent,
-                track,
-                &primary_value_color,
-                compact_mode,
-            );
-            model_x += model_usage_width(segment_count, compact_mode) + sc(MODEL_RIGHT_MARGIN);
-        }
-        if show_codex {
-            draw_usage_bar(
-                hdc,
-                model_x,
-                y,
-                segment_count,
-                codex_percent,
-                codex_text,
-                codex_accent,
-                track,
-                &codex_value_color,
-                compact_mode,
-            );
-            model_x += model_usage_width(segment_count, compact_mode) + sc(MODEL_RIGHT_MARGIN);
-        }
-        if show_secondary {
-            draw_usage_bar(
-                hdc,
-                model_x,
-                y,
-                segment_count,
-                secondary_percent,
-                secondary_text,
-                secondary_accent,
-                track,
-                &secondary_value_color,
-                compact_mode,
-            );
-        }
+        let model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
+        draw_usage_bar(
+            hdc,
+            model_x,
+            y,
+            segment_count,
+            percent,
+            bar_text,
+            accent_color,
+            track,
+            &value_color,
+            compact_mode,
+        );
     }
 }
 
@@ -3273,10 +2991,7 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
 
         assert!(!json.contains("show_"));
-
-        let decoded: SettingsFile = serde_json::from_str(r#"{"show_codex":false}"#).unwrap();
-        assert!(!decoded.show_primary_code);
-        assert!(decoded.show_codex);
-        assert!(!decoded.show_secondary);
+        // show_* fields no longer exist — Codex is always the sole provider
+        assert!(true);
     }
 }
