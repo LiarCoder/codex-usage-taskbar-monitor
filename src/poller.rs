@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
@@ -11,6 +12,8 @@ use crate::models::{UsageData, UsageDisplayMode, UsageSection};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+static HTTP_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PollError {
@@ -149,12 +152,21 @@ fn resolve_windows_codex_path() -> String {
     "codex.cmd".to_string()
 }
 
-fn build_agent() -> Result<ureq::Agent, PollError> {
+fn build_agent() -> Result<&'static ureq::Agent, PollError> {
+    if let Some(agent) = HTTP_AGENT.get() {
+        return Ok(agent);
+    }
+
     let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
-    Ok(ureq::AgentBuilder::new()
+    let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
         .tls_connector(std::sync::Arc::new(tls))
-        .build())
+        .build();
+    let _ = HTTP_AGENT.set(agent);
+
+    Ok(HTTP_AGENT
+        .get()
+        .expect("HTTP agent is initialized before use"))
 }
 
 pub fn credential_watch_snapshot() -> String {
