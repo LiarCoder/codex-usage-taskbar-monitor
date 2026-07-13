@@ -1992,9 +1992,9 @@ unsafe extern "system" fn wnd_proc(
                     // edited auth.json, so retry the poll immediately.
                     let watch = {
                         let state = lock_state();
-                        state.as_ref().map(|s| {
-                            (s.auth_error_paused_polling, s.auth_watch_snapshot.clone())
-                        })
+                        state
+                            .as_ref()
+                            .map(|s| (s.auth_error_paused_polling, s.auth_watch_snapshot.clone()))
                     };
                     match watch {
                         Some((true, previous_snapshot)) => {

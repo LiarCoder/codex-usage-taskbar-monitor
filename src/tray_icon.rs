@@ -2,8 +2,8 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_WARNING,
-    NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_WARNING, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -250,12 +250,7 @@ fn copy_wide_256(s: &str, buf: &mut [u16; 256]) {
 }
 
 /// Register the tray icon with the shell.
-pub fn add(
-    hwnd: HWND,
-    used_percent: Option<f64>,
-    display_percent: Option<f64>,
-    tooltip: &str,
-) {
+pub fn add(hwnd: HWND, used_percent: Option<f64>, display_percent: Option<f64>, tooltip: &str) {
     let hicon = create_icon(used_percent, display_percent);
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
@@ -274,12 +269,7 @@ pub fn add(
 }
 
 /// Update the tray icon colour and tooltip to reflect current usage.
-pub fn update(
-    hwnd: HWND,
-    used_percent: Option<f64>,
-    display_percent: Option<f64>,
-    tooltip: &str,
-) {
+pub fn update(hwnd: HWND, used_percent: Option<f64>, display_percent: Option<f64>, tooltip: &str) {
     let hicon = create_icon(used_percent, display_percent);
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
@@ -313,18 +303,8 @@ pub fn remove(hwnd: HWND) {
 /// one entry per provider; the codex-only build has a single icon, so we
 /// just add+update in one call.
 pub fn sync(hwnd: HWND, icon: &TrayIconData) {
-    add(
-        hwnd,
-        icon.used_percent,
-        icon.display_percent,
-        &icon.tooltip,
-    );
-    update(
-        hwnd,
-        icon.used_percent,
-        icon.display_percent,
-        &icon.tooltip,
-    );
+    add(hwnd, icon.used_percent, icon.display_percent, &icon.tooltip);
+    update(hwnd, icon.used_percent, icon.display_percent, &icon.tooltip);
 }
 
 pub fn remove_all(hwnd: HWND) {
