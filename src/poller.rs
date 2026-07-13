@@ -20,13 +20,6 @@ pub enum PollError {
     RequestFailed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CredentialWatchMode {
-    ActiveSource,
-    AllSources,
-    Secondary,
-}
-
 pub type CredentialWatchSnapshot = Vec<String>;
 
 #[derive(Deserialize)]
@@ -57,14 +50,7 @@ struct CodexRateLimitWindow {
     reset_at: i64,
 }
 
-pub fn poll(
-    _show_primary: bool,
-    show_codex: bool,
-    _show_secondary: bool,
-) -> Result<AppUsageData, PollError> {
-    if !show_codex {
-        return Err(PollError::RequestFailed);
-    }
+pub fn poll() -> Result<UsageData, PollError> {
     let usage = poll_codex()?;
     diagnose::log(format!(
         "Codex usage poll succeeded: session={:.1}% weekly={:.1}%",
@@ -173,7 +159,7 @@ fn build_agent() -> Result<ureq::Agent, PollError> {
         .build())
 }
 
-pub fn credential_watch_snapshot(_mode: CredentialWatchMode) -> CredentialWatchSnapshot {
+pub fn credential_watch_snapshot() -> CredentialWatchSnapshot {
     vec![codex_credential_signature()]
 }
 

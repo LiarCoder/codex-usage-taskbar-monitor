@@ -78,7 +78,6 @@ struct AppState {
     retry_count: u32,
     force_notify_auth_error: bool,
     auth_error_paused_polling: bool,
-    auth_watch_mode: poller::CredentialWatchMode,
     auth_watch_snapshot: poller::CredentialWatchSnapshot,
     last_poll_ok: bool,
     update_status: UpdateStatus,
@@ -710,10 +709,8 @@ fn refresh_usage_texts(state: &mut AppState) {
     // Codex is the only supported provider, so the `data` value itself
     // is the Codex payload. The legacy `primary_code` / `secondary` slots
     // are no longer populated by the poller and have nothing to render.
-    state.codex_session_text =
-        poller::format_line(&data.session, strings, state.usage_display);
-    state.codex_weekly_text =
-        poller::format_line(&data.weekly, strings, state.usage_display);
+    state.codex_session_text = poller::format_line(&data.session, strings, state.usage_display);
+    state.codex_weekly_text = poller::format_line(&data.weekly, strings, state.usage_display);
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1364,7 +1361,6 @@ pub fn run() {
                 retry_count: 0,
                 force_notify_auth_error: false,
                 auth_error_paused_polling: false,
-                auth_watch_mode: poller::CredentialWatchMode::ActiveSource,
                 auth_watch_snapshot: Vec::new(),
                 last_poll_ok: false,
                 update_status: UpdateStatus::Idle,
@@ -1816,22 +1812,14 @@ fn paint_content(
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    let (show_primary_code, show_codex, show_secondary) = {
-        let state = lock_state();
-        state
-            .as_ref()
-            .map(|s| (s.show_primary_code, s.show_codex, s.show_secondary))
-            .unwrap_or((true, false, false))
-    };
 
-    match poller::poll(show_primary_code, show_codex, show_secondary) {
+    match poller::poll() {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
-                // The poller now returns the Codex `UsageData` directly via
-                // the `AppUsageData` type alias, so the data field is the
-                // Codex payload itself. The legacy `primary_code` and
-                // `secondary` slots are no longer populated.
+                // The poller returns the Codex `UsageData` directly via the
+                // `AppUsageData` type alias, so the data field is the
+                // Codex payload itself.
                 s.codex_session_percent = data.session.percentage;
                 s.codex_weekly_percent = data.weekly.percentage;
                 // Stop fast-poll if reset data is now fresh
@@ -1855,7 +1843,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                 }
                 s.force_notify_auth_error = false;
                 s.auth_error_paused_polling = false;
-                s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
                 s.auth_watch_snapshot.clear();
             }
 
@@ -1864,24 +1851,13 @@ fn do_poll(send_hwnd: SendHwnd) {
             }
         }
         Err(e) => {
+            // In the Codex-only build there is only one credential source to
+            // watch (auth.json), so we no longer dispatch on the error
+            // variant: anything that isn't a transient network failure
+            // becomes an auth-watch pause and a balloon notification.
             let auth_watch = match e {
-                poller::PollError::AuthRequired | poller::PollError::TokenExpired
-                    if show_secondary && !show_primary_code && !show_codex =>
-                {
-                    Some((
-                        poller::CredentialWatchMode::Secondary,
-                        poller::credential_watch_snapshot(poller::CredentialWatchMode::Secondary),
-                    ))
-                }
-                poller::PollError::AuthRequired | poller::PollError::TokenExpired => Some((
-                    poller::CredentialWatchMode::ActiveSource,
-                    poller::credential_watch_snapshot(poller::CredentialWatchMode::ActiveSource),
-                )),
-                poller::PollError::NoCredentials => Some((
-                    poller::CredentialWatchMode::AllSources,
-                    poller::credential_watch_snapshot(poller::CredentialWatchMode::AllSources),
-                )),
                 poller::PollError::RequestFailed => None,
+                _ => Some(poller::credential_watch_snapshot()),
             };
             // Distinguish auth-required errors from transient errors.
             let notify_auth_error = {
@@ -1890,14 +1866,14 @@ fn do_poll(send_hwnd: SendHwnd) {
                 if let Some(s) = state.as_mut() {
                     s.last_poll_ok = false;
                     match auth_watch {
-                        Some((watch_mode, watch_snapshot)) => {
-                            // Only show the balloon on the first failure so it doesn't spam.
+                        Some(watch_snapshot) => {
+                            // Only show the balloon on the first failure so it
+                            // doesn't spam.
                             if s.retry_count == 0 || s.force_notify_auth_error {
                                 should_notify = true;
                             }
                             s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = true;
-                            s.auth_watch_mode = watch_mode;
                             s.auth_watch_snapshot = watch_snapshot;
                             s.session_text = "!".to_string();
                             s.weekly_text = "!".to_string();
@@ -1913,11 +1889,10 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 SetTimer(hwnd, TIMER_POLL, s.poll_interval_ms, None);
                             }
                         }
-                        _ => {
-                            // Transient network / credential-missing errors: exponential backoff.
+                        None => {
+                            // Transient network errors: exponential backoff.
                             s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = false;
-                            s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
                             s.auth_watch_snapshot.clear();
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
@@ -1944,32 +1919,17 @@ fn do_poll(send_hwnd: SendHwnd) {
                 let balloon = {
                     let state = lock_state();
                     state.as_ref().map(|s| {
-                        if s.show_primary_code {
-                            (
-                                s.language.strings(),
-                                tray_icon::TrayIconKind::Primary,
-                                s.language.strings().codex_token_expired_title,
-                                s.language.strings().codex_token_expired_body,
-                            )
-                        } else if s.show_codex {
-                            (
-                                s.language.strings(),
-                                tray_icon::TrayIconKind::Codex,
-                                s.language.strings().codex_token_expired_title,
-                                s.language.strings().codex_token_expired_body,
-                            )
-                        } else {
-                            (
-                                s.language.strings(),
-                                tray_icon::TrayIconKind::Secondary,
-                                s.language.strings().codex_token_expired_title,
-                                s.language.strings().codex_token_expired_body,
-                            )
-                        }
+                        // Codex-only build: always notify on the Codex
+                        // tray icon.
+                        (
+                            s.language.strings(),
+                            s.language.strings().codex_token_expired_title,
+                            s.language.strings().codex_token_expired_body,
+                        )
                     })
                 };
-                if let Some((_strings, kind, title, body)) = balloon {
-                    tray_icon::notify_balloon(hwnd, kind, title, body);
+                if let Some((_strings, title, body)) = balloon {
+                    tray_icon::notify_balloon(hwnd, tray_icon::TrayIconKind::Codex, title, body);
                 }
             }
 
@@ -2271,25 +2231,24 @@ unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    let auth_watch = {
+                    // In the Codex-only build there is exactly one
+                    // watchable credential source, so the timer only
+                    // cares about the paused flag and the previous
+                    // snapshot. If the snapshot changed the user has
+                    // edited auth.json, so retry the poll immediately.
+                    let watch = {
                         let state = lock_state();
                         state.as_ref().map(|s| {
-                            (
-                                s.auth_error_paused_polling,
-                                s.auth_watch_mode,
-                                s.auth_watch_snapshot.clone(),
-                            )
+                            (s.auth_error_paused_polling, s.auth_watch_snapshot.clone())
                         })
                     };
-                    match auth_watch {
-                        Some((true, watch_mode, previous_snapshot)) => {
-                            let current_snapshot = poller::credential_watch_snapshot(watch_mode);
+                    match watch {
+                        Some((true, previous_snapshot)) => {
+                            let current_snapshot = poller::credential_watch_snapshot();
                             if current_snapshot != previous_snapshot {
                                 let mut state = lock_state();
                                 if let Some(s) = state.as_mut() {
-                                    if s.auth_error_paused_polling
-                                        && s.auth_watch_mode == watch_mode
-                                    {
+                                    if s.auth_error_paused_polling {
                                         s.auth_watch_snapshot = current_snapshot;
                                     }
                                 }
@@ -2300,7 +2259,7 @@ unsafe extern "system" fn wnd_proc(
                                 });
                             }
                         }
-                        Some((false, _, _)) => {
+                        Some((false, _)) => {
                             let sh = SendHwnd::from_hwnd(hwnd);
                             std::thread::spawn(move || {
                                 do_poll(sh);
