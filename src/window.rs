@@ -1379,21 +1379,24 @@ fn render_layered() {
         // Render once with the actual taskbar background colour.
         // Using an opaque background lets us use CLEARTYPE_QUALITY for
         // sub-pixel font rendering that matches the rest of the OS.
+        let ctx = RenderContext {
+            hdc: mem_dc,
+            is_dark,
+            text_color,
+            accent: codex_accent,
+            track,
+            compact_mode,
+        };
         paint_content(
-            mem_dc,
+            &ctx,
             width,
             height,
-            is_dark,
             &bg_color,
-            &text_color,
-            &codex_accent,
-            &track,
             strings,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
-            compact_mode,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1442,22 +1445,30 @@ fn render_layered() {
     }
 }
 
-/// Paint all widget content onto a DC with a given background color.
-fn paint_content(
+/// Bundles the immutable drawing parameters shared across the
+/// GDI rendering helpers so each function stays under clippy's
+/// 7-argument threshold.
+struct RenderContext {
     hdc: HDC,
+    is_dark: bool,
+    text_color: Color,
+    accent: Color,
+    track: Color,
+    compact_mode: bool,
+}
+
+/// Paint all widget content onto a DC with a given background color.
+#[allow(clippy::too_many_arguments)]
+fn paint_content(
+    ctx: &RenderContext,
     width: i32,
     height: i32,
-    is_dark: bool,
     bg: &Color,
-    text_color: &Color,
-    accent: &Color,
-    track: &Color,
     strings: Strings,
     session_pct: f64,
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
-    compact_mode: bool,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1468,7 +1479,7 @@ fn paint_content(
         };
 
         let bg_brush = CreateSolidBrush(COLORREF(bg.to_colorref()));
-        FillRect(hdc, &client_rect, bg_brush);
+        FillRect(ctx.hdc, &client_rect, bg_brush);
         let _ = DeleteObject(bg_brush);
 
         // Left divider
@@ -1476,7 +1487,7 @@ fn paint_content(
         let divider_top = (height - divider_h) / 2;
         let divider_bottom = divider_top + divider_h;
 
-        let (div_left, div_right) = if is_dark {
+        let (div_left, div_right) = if ctx.is_dark {
             ((80, 80, 80), (40, 40, 40))
         } else {
             ((160, 160, 160), (230, 230, 230))
@@ -1491,7 +1502,7 @@ fn paint_content(
             right: sc(2),
             bottom: divider_bottom,
         };
-        FillRect(hdc, &left_rect, left_brush);
+        FillRect(ctx.hdc, &left_rect, left_brush);
         let _ = DeleteObject(left_brush);
 
         let right_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
@@ -1505,15 +1516,15 @@ fn paint_content(
             right: sc(3),
             bottom: divider_bottom,
         };
-        FillRect(hdc, &right_rect, right_brush);
+        FillRect(ctx.hdc, &right_rect, right_brush);
         let _ = DeleteObject(right_brush);
 
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
         let row2_y = height - sc(5) - sc(SEGMENT_H);
         let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
 
-        let _ = SetBkMode(hdc, TRANSPARENT);
-        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+        let _ = SetBkMode(ctx.hdc, TRANSPARENT);
+        let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));
 
         let font_name = native_interop::wide_str("Segoe UI");
         let font = CreateFontW(
@@ -1532,38 +1543,28 @@ fn paint_content(
             (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
             PCWSTR::from_raw(font_name.as_ptr()),
         );
-        let old_font = SelectObject(hdc, font);
+        let old_font = SelectObject(ctx.hdc, font);
 
         // Session row (5h window)
         draw_row(
-            hdc,
+            ctx,
             content_x,
             row1_y,
-            is_dark,
-            text_color,
             strings.session_window,
             session_pct,
             session_text,
-            compact_mode,
-            accent,
-            track,
         );
         // Weekly row (7d window)
         draw_row(
-            hdc,
+            ctx,
             content_x,
             row2_y,
-            is_dark,
-            text_color,
             strings.weekly_window,
             weekly_pct,
             weekly_text,
-            compact_mode,
-            accent,
-            track,
         );
 
-        SelectObject(hdc, old_font);
+        SelectObject(ctx.hdc, old_font);
         let _ = DeleteObject(font);
     }
 }
@@ -2755,21 +2756,24 @@ fn paint(hdc: HDC, hwnd: HWND) {
         let mem_bmp = CreateCompatibleBitmap(hdc, width, height);
         let old_bmp = SelectObject(mem_dc, mem_bmp);
 
+        let ctx = RenderContext {
+            hdc: mem_dc,
+            is_dark,
+            text_color,
+            accent: codex_accent,
+            track,
+            compact_mode,
+        };
         paint_content(
-            mem_dc,
+            &ctx,
             width,
             height,
-            is_dark,
             &bg_color,
-            &text_color,
-            &codex_accent,
-            &track,
             strings,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
-            compact_mode,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -2780,26 +2784,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
     }
 }
 
-fn draw_row(
-    hdc: HDC,
-    x: i32,
-    y: i32,
-    _is_dark: bool,
-    text_color: &Color,
-    label: &str,
-    percent: f64,
-    bar_text: &str,
-    compact_mode: bool,
-    accent_color: &Color,
-    track: &Color,
-) {
+fn draw_row(ctx: &RenderContext, x: i32, y: i32, label: &str, percent: f64, bar_text: &str) {
     let seg_h = sc(SEGMENT_H);
     let segment_count = SEGMENT_COUNT;
     // codex-only: always use the generic text color
-    let value_color = *text_color;
+    let value_color = ctx.text_color;
 
     unsafe {
-        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+        let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));
         let mut label_wide: Vec<u16> = label.encode_utf16().collect();
         let mut label_rect = RECT {
             left: x,
@@ -2808,7 +2800,7 @@ fn draw_row(
             bottom: y + seg_h,
         };
         let _ = DrawTextW(
-            hdc,
+            ctx.hdc,
             &mut label_wide,
             &mut label_rect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
@@ -2816,16 +2808,13 @@ fn draw_row(
 
         let model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
         draw_usage_bar(
-            hdc,
+            ctx,
             model_x,
             y,
             segment_count,
             percent,
             bar_text,
-            accent_color,
-            track,
             &value_color,
-            compact_mode,
         );
     }
 }
@@ -2841,16 +2830,13 @@ fn model_usage_width(segment_count: i32, compact_mode: bool) -> i32 {
 }
 
 fn draw_usage_bar(
-    hdc: HDC,
+    ctx: &RenderContext,
     bar_x: i32,
     y: i32,
     segment_count: i32,
     percent: f64,
     text: &str,
-    accent: &Color,
-    track: &Color,
     text_color: &Color,
-    compact_mode: bool,
 ) {
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -2858,7 +2844,7 @@ fn draw_usage_bar(
     let corner_r = sc(CORNER_RADIUS);
 
     unsafe {
-        if !compact_mode {
+        if !ctx.compact_mode {
             let percent_clamped = percent.clamp(0.0, 100.0);
             let segment_percent = 100.0 / segment_count as f64;
 
@@ -2875,11 +2861,11 @@ fn draw_usage_bar(
                 };
 
                 if percent_clamped >= seg_end {
-                    draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
+                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.accent, corner_r);
                 } else if percent_clamped <= seg_start {
-                    draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.track, corner_r);
                 } else {
-                    draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.track, corner_r);
                     let fraction = (percent_clamped - seg_start) / segment_percent;
                     let fill_width = (seg_w as f64 * fraction) as i32;
                     if fill_width > 0 {
@@ -2897,18 +2883,18 @@ fn draw_usage_bar(
                             corner_r * 2,
                             corner_r * 2,
                         );
-                        let _ = SelectClipRgn(hdc, rgn);
-                        let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
-                        FillRect(hdc, &fill_rect, brush);
+                        let _ = SelectClipRgn(ctx.hdc, rgn);
+                        let brush = CreateSolidBrush(COLORREF(ctx.accent.to_colorref()));
+                        FillRect(ctx.hdc, &fill_rect, brush);
                         let _ = DeleteObject(brush);
-                        let _ = SelectClipRgn(hdc, HRGN::default());
+                        let _ = SelectClipRgn(ctx.hdc, HRGN::default());
                         let _ = DeleteObject(rgn);
                     }
                 }
             }
         }
 
-        let text_x = if compact_mode {
+        let text_x = if ctx.compact_mode {
             bar_x
         } else {
             bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN)
@@ -2920,9 +2906,9 @@ fn draw_usage_bar(
             right: text_x + sc(TEXT_WIDTH),
             bottom: y + seg_h,
         };
-        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+        let _ = SetTextColor(ctx.hdc, COLORREF(text_color.to_colorref()));
         let _ = DrawTextW(
-            hdc,
+            ctx.hdc,
             &mut text_wide,
             &mut text_rect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
