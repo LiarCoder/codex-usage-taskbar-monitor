@@ -1,9 +1,6 @@
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use serde::{Deserialize, Serialize};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -27,6 +24,11 @@ use crate::platform::theme;
 use crate::poller;
 use crate::tray;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
+
+mod layout;
+use layout::*;
+mod settings;
+use settings::*;
 
 /// Wrapper to make HWND sendable across threads (safe for PostMessage usage)
 #[derive(Clone, Copy)]
@@ -121,7 +123,7 @@ const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
 
 const POLL_1_MIN: u32 = 60_000;
 const POLL_5_MIN: u32 = 300_000;
-const POLL_15_MIN: u32 = 900_000;
+pub(crate) const POLL_15_MIN: u32 = 900_000;
 const POLL_1_HOUR: u32 = 3_600_000;
 
 // Menu item IDs for update frequency
@@ -159,31 +161,6 @@ const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
 const TASKBAR_WATCH_INTERVAL_SECS: u64 = 2;
 
 static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
-
-/// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
-static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
-
-/// Scale a base pixel value (designed at 96 DPI) to the current DPI.
-fn sc(px: i32) -> i32 {
-    let dpi = CURRENT_DPI.load(Ordering::Relaxed);
-    (px as f64 * dpi as f64 / 96.0).round() as i32
-}
-
-/// Re-query the monitor DPI for our window and update the cached value.
-/// Uses GetDpiForWindow which returns the live DPI (unlike GetDpiForSystem
-/// which is cached at process startup and never changes).
-fn refresh_dpi() {
-    let hwnd = {
-        let state = lock_state();
-        state.as_ref().map(|s| s.hwnd.to_hwnd())
-    };
-    if let Some(hwnd) = hwnd {
-        let dpi = unsafe { GetDpiForWindow(hwnd) };
-        if dpi > 0 {
-            CURRENT_DPI.store(dpi, Ordering::Relaxed);
-        }
-    }
-}
 
 /// Spacing below which two relaunches are treated as a storm (e.g. explorer.exe
 /// crash-looping); when detected we back off instead of spawning in a tight loop.
@@ -305,84 +282,6 @@ static STATE: Mutex<Option<AppState>> = Mutex::new(None);
 /// Lock STATE safely, recovering from poisoned mutex
 fn lock_state() -> MutexGuard<'static, Option<AppState>> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn settings_path() -> PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(appdata)
-        .join("CodexUsageTaskbarMonitor")
-        .join("settings.json")
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct SettingsFile {
-    #[serde(default)]
-    tray_offset: i32,
-    #[serde(default)]
-    taskbar_index: usize,
-    #[serde(default = "default_poll_interval")]
-    poll_interval_ms: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_update_check_unix: Option<u64>,
-    #[serde(default = "default_widget_visible")]
-    widget_visible: bool,
-    #[serde(default)]
-    compact_mode: bool,
-    #[serde(default)]
-    usage_display: UsageDisplayMode,
-    #[serde(default = "default_show_usage_window")]
-    show_5hour_window: bool,
-    #[serde(default = "default_show_usage_window")]
-    show_7day_window: bool,
-}
-
-impl Default for SettingsFile {
-    fn default() -> Self {
-        Self {
-            tray_offset: 0,
-            taskbar_index: 0,
-            poll_interval_ms: default_poll_interval(),
-            language: None,
-            last_update_check_unix: None,
-            widget_visible: true,
-            compact_mode: false,
-            usage_display: UsageDisplayMode::Used,
-            show_5hour_window: true,
-            show_7day_window: true,
-        }
-    }
-}
-
-fn default_poll_interval() -> u32 {
-    POLL_15_MIN
-}
-
-fn default_widget_visible() -> bool {
-    true
-}
-
-fn default_show_usage_window() -> bool {
-    true
-}
-
-fn load_settings() -> SettingsFile {
-    let content = match std::fs::read_to_string(settings_path()) {
-        Ok(c) => c,
-        Err(_) => return SettingsFile::default(),
-    };
-    serde_json::from_str(&content).unwrap_or_default()
-}
-
-fn save_settings(settings: &SettingsFile) {
-    let path = settings_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(settings) {
-        let _ = std::fs::write(path, json);
-    }
 }
 
 fn save_state_settings() {
@@ -1034,30 +933,12 @@ fn set_startup_enabled(enable: bool) {
     }
 }
 
-// Dimensions matching the C# version
-const SEGMENT_W: i32 = 10;
-const SEGMENT_H: i32 = 13;
-const SEGMENT_GAP: i32 = 1;
-const SEGMENT_COUNT: i32 = 10;
-const CORNER_RADIUS: i32 = 2;
-
-const LEFT_DIVIDER_W: i32 = 3;
-const DIVIDER_RIGHT_MARGIN: i32 = 10;
-const LABEL_WIDTH: i32 = 18;
-const LABEL_RIGHT_MARGIN: i32 = 10;
-const BAR_RIGHT_MARGIN: i32 = 4;
-const TEXT_WIDTH: i32 = 62;
-const MODEL_RIGHT_MARGIN: i32 = 3;
-const RIGHT_MARGIN: i32 = 1;
-const WIDGET_HEIGHT: i32 = 46;
-
-fn is_drag_handle_point(client_x: i32, client_y: i32) -> bool {
-    let divider_h = sc(25);
-    let divider_top = (sc(WIDGET_HEIGHT) - divider_h) / 2;
-    client_x >= 0
-        && client_x < sc(LEFT_DIVIDER_W)
-        && client_y >= divider_top
-        && client_y < divider_top + divider_h
+fn accent_color(is_dark: bool) -> Color {
+    if is_dark {
+        Color::from_hex("#F5F5F5")
+    } else {
+        Color::from_hex("#1F1F1F")
+    }
 }
 
 fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
@@ -1067,51 +948,6 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
             return false;
         }
         is_drag_handle_point(pt.x, pt.y)
-    }
-}
-
-fn row_bar_segment_count(_active_models: i32) -> i32 {
-    SEGMENT_COUNT
-}
-
-fn total_widget_width_for(active_models: i32, compact_mode: bool) -> i32 {
-    let bar_segments = row_bar_segment_count(active_models);
-    let model_width = model_usage_width(bar_segments, compact_mode);
-
-    sc(LEFT_DIVIDER_W)
-        + sc(DIVIDER_RIGHT_MARGIN)
-        + sc(LABEL_WIDTH)
-        + sc(LABEL_RIGHT_MARGIN)
-        + model_width * active_models
-        + sc(MODEL_RIGHT_MARGIN) * (active_models - 1)
-        + sc(RIGHT_MARGIN)
-}
-
-fn total_widget_width_for_state(state: &AppState) -> i32 {
-    total_widget_width_for(1 /* codex-only */, state.compact_mode)
-}
-
-fn total_widget_width() -> i32 {
-    let (active_models, compact_mode) = {
-        let state = lock_state();
-        state
-            .as_ref()
-            .map(|s| {
-                (
-                    1, // codex-only
-                    s.compact_mode,
-                )
-            })
-            .unwrap_or((1, false))
-    };
-    total_widget_width_for(active_models, compact_mode)
-}
-
-fn accent_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#F5F5F5")
-    } else {
-        Color::from_hex("#1F1F1F")
     }
 }
 
@@ -1996,11 +1832,6 @@ fn position_at_taskbar() {
             "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
         ));
     }
-}
-
-fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
-    let anchor_bottom = anchor_top + anchor_height;
-    (anchor_bottom - widget_height).max(anchor_top)
 }
 
 /// WinEvent callback for tray icon location changes
@@ -2999,16 +2830,6 @@ fn draw_row(ctx: &RenderContext, x: i32, y: i32, label: &str, percent: f64, bar_
             bar_text,
             &value_color,
         );
-    }
-}
-
-fn model_usage_width(segment_count: i32, compact_mode: bool) -> i32 {
-    if compact_mode {
-        sc(TEXT_WIDTH)
-    } else {
-        (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
-            + sc(BAR_RIGHT_MARGIN)
-            + sc(TEXT_WIDTH)
     }
 }
 
