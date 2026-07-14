@@ -58,9 +58,11 @@ struct AppState {
     /// Codex 5h-window usage.
     session_percent: f64,
     session_text: String,
+    session_available: bool,
     /// Codex 7d-window usage.
     weekly_percent: f64,
     weekly_text: String,
+    weekly_available: bool,
 
     usage_display: UsageDisplayMode,
 
@@ -84,6 +86,8 @@ struct AppState {
 
     widget_visible: bool,
     compact_mode: bool,
+    show_5hour_window: bool,
+    show_7day_window: bool,
 }
 
 impl AppState {
@@ -133,6 +137,8 @@ const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_RESET_POSITION: u16 = 30;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_COMPACT_MODE: u16 = 32;
+const IDM_SHOW_5HOUR_WINDOW: u16 = 33;
+const IDM_SHOW_7DAY_WINDOW: u16 = 34;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
 const IDM_LANG_DUTCH: u16 = 42;
@@ -330,6 +336,10 @@ struct SettingsFile {
     compact_mode: bool,
     #[serde(default)]
     usage_display: UsageDisplayMode,
+    #[serde(default = "default_show_usage_window")]
+    show_5hour_window: bool,
+    #[serde(default = "default_show_usage_window")]
+    show_7day_window: bool,
 }
 
 impl Default for SettingsFile {
@@ -343,6 +353,8 @@ impl Default for SettingsFile {
             widget_visible: true,
             compact_mode: false,
             usage_display: UsageDisplayMode::Used,
+            show_5hour_window: true,
+            show_7day_window: true,
         }
     }
 }
@@ -352,6 +364,10 @@ fn default_poll_interval() -> u32 {
 }
 
 fn default_widget_visible() -> bool {
+    true
+}
+
+fn default_show_usage_window() -> bool {
     true
 }
 
@@ -387,6 +403,8 @@ fn save_state_settings() {
             widget_visible: s.widget_visible,
             compact_mode: s.compact_mode,
             usage_display: s.usage_display,
+            show_5hour_window: s.show_5hour_window,
+            show_7day_window: s.show_7day_window,
         });
     }
 }
@@ -596,8 +614,12 @@ fn refresh_usage_texts(state: &mut AppState) {
     // Codex is the only supported provider, so the `data` value itself
     // is the Codex payload. The legacy `primary_code` / `secondary` slots
     // are no longer populated by the poller and have nothing to render.
-    state.session_text = poller::format_line(&data.session, strings, state.usage_display);
-    state.weekly_text = poller::format_line(&data.weekly, strings, state.usage_display);
+    if let Some(session) = data.session.as_ref() {
+        state.session_text = poller::format_line(session, strings, state.usage_display);
+    }
+    if let Some(weekly) = data.weekly.as_ref() {
+        state.weekly_text = poller::format_line(weekly, strings, state.usage_display);
+    }
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1178,8 +1200,10 @@ pub fn run() {
                 install_channel,
                 session_percent: 0.0,
                 session_text: "--".to_string(),
+                session_available: false,
                 weekly_percent: 0.0,
                 weekly_text: "--".to_string(),
+                weekly_available: false,
                 usage_display: settings.usage_display,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -1198,6 +1222,8 @@ pub fn run() {
                 drag_start_offset: 0,
                 widget_visible: settings.widget_visible,
                 compact_mode: settings.compact_mode,
+                show_5hour_window: settings.show_5hour_window,
+                show_7day_window: settings.show_7day_window,
             });
         }
 
@@ -1295,6 +1321,8 @@ fn render_layered() {
         codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
+        show_session,
+        show_weekly,
         compact_mode,
     ) = {
         let state = lock_state();
@@ -1304,10 +1332,12 @@ fn render_layered() {
                 s.is_dark,
                 s.embedded,
                 s.language.strings(),
-                s.display_percentage(s.session_percent, s.codex_usage_available()),
+                s.display_percentage(s.session_percent, s.session_available),
                 s.session_text.clone(),
-                s.display_percentage(s.weekly_percent, s.codex_usage_available()),
+                s.display_percentage(s.weekly_percent, s.weekly_available),
                 s.weekly_text.clone(),
+                s.show_5hour_window && s.session_available,
+                s.show_7day_window && s.weekly_available,
                 s.compact_mode,
             ),
             None => return,
@@ -1395,6 +1425,8 @@ fn render_layered() {
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
+            show_session,
+            show_weekly,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1467,6 +1499,8 @@ fn paint_content(
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
+    show_session: bool,
+    show_weekly: bool,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1543,27 +1577,64 @@ fn paint_content(
         );
         let old_font = SelectObject(ctx.hdc, font);
 
-        // Session row (5h window)
-        draw_row(
-            ctx,
-            content_x,
-            row1_y,
-            strings.session_window,
-            session_pct,
-            session_text,
-        );
-        // Weekly row (7d window)
-        draw_row(
-            ctx,
-            content_x,
-            row2_y,
-            strings.weekly_window,
-            weekly_pct,
-            weekly_text,
-        );
+        match (show_session, show_weekly) {
+            (true, true) => {
+                draw_row(
+                    ctx,
+                    content_x,
+                    row1_y,
+                    strings.session_window,
+                    session_pct,
+                    session_text,
+                );
+                draw_row(
+                    ctx,
+                    content_x,
+                    row2_y,
+                    strings.weekly_window,
+                    weekly_pct,
+                    weekly_text,
+                );
+            }
+            (true, false) => draw_row(
+                ctx,
+                content_x,
+                (height - sc(SEGMENT_H)) / 2,
+                strings.session_window,
+                session_pct,
+                session_text,
+            ),
+            (false, true) => draw_row(
+                ctx,
+                content_x,
+                (height - sc(SEGMENT_H)) / 2,
+                strings.weekly_window,
+                weekly_pct,
+                weekly_text,
+            ),
+            (false, false) => draw_centered_text(ctx, width, height, strings.no_data),
+        }
 
         SelectObject(ctx.hdc, old_font);
         let _ = DeleteObject(font);
+    }
+}
+
+fn draw_centered_text(ctx: &RenderContext, width: i32, height: i32, text: &str) {
+    unsafe {
+        let mut text_wide: Vec<u16> = text.encode_utf16().collect();
+        let mut rect = RECT {
+            left: sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN),
+            top: 0,
+            right: width - sc(RIGHT_MARGIN),
+            bottom: height,
+        };
+        let _ = DrawTextW(
+            ctx.hdc,
+            &mut text_wide,
+            &mut rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
     }
 }
 
@@ -1574,8 +1645,14 @@ fn do_poll(send_hwnd: SendHwnd) {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
-                s.session_percent = data.session.percentage;
-                s.weekly_percent = data.weekly.percentage;
+                s.session_available = data.session.is_some();
+                s.weekly_available = data.weekly.is_some();
+                if let Some(session) = data.session.as_ref() {
+                    s.session_percent = session.percentage;
+                }
+                if let Some(weekly) = data.weekly.as_ref() {
+                    s.weekly_percent = weekly.percentage;
+                }
                 // Stop fast-poll if reset data is now fresh
                 if !poller::is_past_reset(&data) {
                     unsafe {
@@ -1709,8 +1786,12 @@ fn schedule_countdown_timer() {
     }
 
     let delays = [
-        poller::time_until_display_change(data.session.resets_at),
-        poller::time_until_display_change(data.weekly.resets_at),
+        data.session
+            .as_ref()
+            .and_then(|section| poller::time_until_display_change(section.resets_at)),
+        data.weekly
+            .as_ref()
+            .and_then(|section| poller::time_until_display_change(section.resets_at)),
     ];
     let min_delay = delays.into_iter().flatten().min();
 
@@ -2304,6 +2385,32 @@ unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
                 }
+                IDM_SHOW_5HOUR_WINDOW | IDM_SHOW_7DAY_WINDOW => {
+                    let changed = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            if id == IDM_SHOW_5HOUR_WINDOW {
+                                if s.show_5hour_window && !s.show_7day_window {
+                                    false
+                                } else {
+                                    s.show_5hour_window = !s.show_5hour_window;
+                                    true
+                                }
+                            } else if s.show_7day_window && !s.show_5hour_window {
+                                false
+                            } else {
+                                s.show_7day_window = !s.show_7day_window;
+                                true
+                            }
+                        } else {
+                            false
+                        }
+                    };
+                    if changed {
+                        save_state_settings();
+                        render_layered();
+                    }
+                }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
                 }
@@ -2424,6 +2531,8 @@ fn show_context_menu(hwnd: HWND) {
             widget_visible,
             compact_mode,
             usage_display,
+            show_5hour_window,
+            show_7day_window,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2437,6 +2546,8 @@ fn show_context_menu(hwnd: HWND) {
                     s.widget_visible,
                     s.compact_mode,
                     s.usage_display,
+                    s.show_5hour_window,
+                    s.show_7day_window,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2448,6 +2559,8 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     UsageDisplayMode::Used,
+                    true,
+                    true,
                 ),
             }
         };
@@ -2516,6 +2629,43 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         let usage_display_label = native_interop::wide_str(strings.usage_display);
+
+        let usage_windows_menu = CreatePopupMenu().unwrap();
+        let five_hour_label = native_interop::wide_str(strings.show_5hour_window);
+        let five_hour_flags = if show_5hour_window {
+            if !show_7day_window {
+                MF_CHECKED | MF_GRAYED
+            } else {
+                MF_CHECKED
+            }
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            usage_windows_menu,
+            five_hour_flags,
+            IDM_SHOW_5HOUR_WINDOW as usize,
+            PCWSTR::from_raw(five_hour_label.as_ptr()),
+        );
+
+        let seven_day_label = native_interop::wide_str(strings.show_7day_window);
+        let seven_day_flags = if show_7day_window {
+            if !show_5hour_window {
+                MF_CHECKED | MF_GRAYED
+            } else {
+                MF_CHECKED
+            }
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            usage_windows_menu,
+            seven_day_flags,
+            IDM_SHOW_7DAY_WINDOW as usize,
+            PCWSTR::from_raw(seven_day_label.as_ptr()),
+        );
+
+        let usage_windows_label = native_interop::wide_str(strings.usage_windows);
 
         // Settings submenu
         let settings_menu = CreatePopupMenu().unwrap();
@@ -2618,6 +2768,13 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(usage_display_label.as_ptr()),
         );
 
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            usage_windows_menu.0 as usize,
+            PCWSTR::from_raw(usage_windows_label.as_ptr()),
+        );
+
         let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
         let version_label =
@@ -2686,6 +2843,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
         codex_session_text,
         codex_weekly_pct,
         codex_weekly_text,
+        show_session,
+        show_weekly,
         compact_mode,
     ) = {
         let state = lock_state();
@@ -2693,10 +2852,12 @@ fn paint(hdc: HDC, hwnd: HWND) {
             Some(s) => (
                 s.is_dark,
                 s.language.strings(),
-                s.display_percentage(s.session_percent, s.codex_usage_available()),
+                s.display_percentage(s.session_percent, s.session_available),
                 s.session_text.clone(),
-                s.display_percentage(s.weekly_percent, s.codex_usage_available()),
+                s.display_percentage(s.weekly_percent, s.weekly_available),
                 s.weekly_text.clone(),
+                s.show_5hour_window && s.session_available,
+                s.show_7day_window && s.weekly_available,
                 s.compact_mode,
             ),
             None => return,
@@ -2752,6 +2913,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &codex_session_text,
             codex_weekly_pct,
             &codex_weekly_text,
+            show_session,
+            show_weekly,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -2921,6 +3084,8 @@ mod tests {
 
         assert_eq!(settings.tray_offset, 12);
         assert_eq!(settings.usage_display, UsageDisplayMode::Used);
+        assert!(settings.show_5hour_window);
+        assert!(settings.show_7day_window);
     }
 
     #[test]
@@ -2939,6 +3104,7 @@ mod tests {
     fn remaining_usage_display_round_trips_through_settings_json() {
         let settings = SettingsFile {
             usage_display: UsageDisplayMode::Remaining,
+            show_5hour_window: false,
             ..SettingsFile::default()
         };
 
@@ -2947,13 +3113,16 @@ mod tests {
 
         let decoded: SettingsFile = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.usage_display, UsageDisplayMode::Remaining);
+        assert!(!decoded.show_5hour_window);
+        assert!(decoded.show_7day_window);
     }
 
     #[test]
-    fn provider_selection_is_not_persisted() {
+    fn usage_window_selection_is_persisted() {
         let settings = SettingsFile::default();
         let json = serde_json::to_string(&settings).unwrap();
 
-        assert!(!json.contains("show_"));
+        assert!(json.contains(r#""show_5hour_window":true"#));
+        assert!(json.contains(r#""show_7day_window":true"#));
     }
 }

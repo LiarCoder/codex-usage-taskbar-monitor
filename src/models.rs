@@ -28,8 +28,8 @@ pub struct UsageSection {
 
 #[derive(Clone, Debug, Default)]
 pub struct UsageData {
-    pub session: UsageSection,
-    pub weekly: UsageSection,
+    pub session: Option<UsageSection>,
+    pub weekly: Option<UsageSection>,
 }
 
 #[cfg(test)]

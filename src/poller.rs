@@ -58,10 +58,10 @@ pub fn poll() -> Result<UsageData, PollError> {
     match poll_codex() {
         Ok(usage) => {
             diagnose::log(format!(
-                "Codex usage poll succeeded in {}ms: session={:.1}% weekly={:.1}%",
+                "Codex usage poll succeeded in {}ms: session={:?} weekly={:?}",
                 started.elapsed().as_millis(),
-                usage.session.percentage,
-                usage.weekly.percentage
+                usage.session.as_ref().map(|section| section.percentage),
+                usage.weekly.as_ref().map(|section| section.percentage)
             ));
             Ok(usage)
         }
@@ -257,11 +257,24 @@ fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<UsageData,
 fn codex_usage_from_response(response: CodexUsageResponse) -> Option<UsageData> {
     let details = *response.rate_limit.flatten()?;
     let mut data = UsageData::default();
-    if let Some(window) = details.primary_window.flatten() {
-        data.session = codex_section_from_window(&window);
-    }
-    if let Some(window) = details.secondary_window.flatten() {
-        data.weekly = codex_section_from_window(&window);
+    let primary = details.primary_window.flatten();
+    let secondary = details.secondary_window.flatten();
+
+    match (primary, secondary) {
+        // Legacy responses expose both windows in their original order.
+        (Some(primary), Some(secondary)) => {
+            data.session = Some(codex_section_from_window(&primary));
+            data.weekly = Some(codex_section_from_window(&secondary));
+        }
+        // Current responses can expose one long-window limit through the
+        // primary field after the 5-hour window has been retired.
+        (Some(primary), None) => {
+            data.weekly = Some(codex_section_from_window(&primary));
+        }
+        (None, Some(secondary)) => {
+            data.weekly = Some(codex_section_from_window(&secondary));
+        }
+        (None, None) => {}
     }
     Some(data)
 }
@@ -352,9 +365,10 @@ pub fn time_until_display_change(resets_at: Option<SystemTime>) -> Option<Durati
 
 pub fn is_past_reset(data: &UsageData) -> bool {
     let now = SystemTime::now();
-    [data.session.resets_at, data.weekly.resets_at]
+    [data.session.as_ref(), data.weekly.as_ref()]
         .into_iter()
         .flatten()
+        .filter_map(|section| section.resets_at)
         .any(|reset| now.duration_since(reset).is_ok())
 }
 
@@ -368,7 +382,19 @@ mod tests {
             r#"{"rate_limit":{"primary_window":{"used_percent":42,"reset_at":100},"secondary_window":{"used_percent":64,"reset_at":200}}}"#,
         ).unwrap();
         let data = codex_usage_from_response(response).unwrap();
-        assert_eq!(data.session.percentage, 42.0);
-        assert_eq!(data.weekly.percentage, 64.0);
+        assert_eq!(data.session.unwrap().percentage, 42.0);
+        assert_eq!(data.weekly.unwrap().percentage, 64.0);
+    }
+
+    #[test]
+    fn maps_a_lone_primary_window_to_the_7_day_display() {
+        let response: CodexUsageResponse = serde_json::from_str(
+            r#"{"rate_limit":{"primary_window":{"used_percent":64,"reset_at":200}}}"#,
+        )
+        .unwrap();
+        let data = codex_usage_from_response(response).unwrap();
+
+        assert!(data.session.is_none());
+        assert_eq!(data.weekly.unwrap().percentage, 64.0);
     }
 }
