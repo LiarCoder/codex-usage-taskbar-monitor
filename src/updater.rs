@@ -595,15 +595,15 @@ mod tests {
     fn extracts_release_tag_from_github_latest_redirect() {
         assert_eq!(
             release_tag_from_latest_location(
-                "https://github.com/LiarCoder/codex-usage-taskbar-monitor/releases/tag/v1.5.1"
+                "https://github.com/LiarCoder/codex-usage-taskbar-monitor/releases/tag/v1.5.2"
             ),
-            Some("v1.5.1")
+            Some("v1.5.2")
         );
         assert_eq!(
             release_tag_from_latest_location(
-                "/LiarCoder/codex-usage-taskbar-monitor/releases/tag/v1.5.1?expanded=true"
+                "/LiarCoder/codex-usage-taskbar-monitor/releases/tag/v1.5.2?expanded=true"
             ),
-            Some("v1.5.1")
+            Some("v1.5.2")
         );
         assert_eq!(
             release_tag_from_latest_location("https://github.com/LiarCoder/repo/releases"),
@@ -614,8 +614,8 @@ mod tests {
     #[test]
     fn builds_github_release_asset_url_from_tag() {
         assert_eq!(
-            github_release_asset_url("LiarCoder", "codex-usage-taskbar-monitor", "v1.5.1"),
-            "https://github.com/LiarCoder/codex-usage-taskbar-monitor/releases/download/v1.5.1/codex-usage-taskbar-monitor.exe"
+            github_release_asset_url("LiarCoder", "codex-usage-taskbar-monitor", "v1.5.2"),
+            "https://github.com/LiarCoder/codex-usage-taskbar-monitor/releases/download/v1.5.2/codex-usage-taskbar-monitor.exe"
         );
     }
 }
