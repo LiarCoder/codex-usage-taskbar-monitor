@@ -16,16 +16,16 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::diagnose;
+use crate::core::diagnose;
+use crate::core::models::{UsageData, UsageDisplayMode};
 use crate::localization::{self, LanguageId, Strings};
-use crate::models::{UsageData, UsageDisplayMode};
-use crate::native_interop::{
+use crate::platform::native::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
     WM_APP_USAGE_UPDATED,
 };
+use crate::platform::theme;
 use crate::poller;
-use crate::theme;
-use crate::tray_icon;
+use crate::tray;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
 
 /// Wrapper to make HWND sendable across threads (safe for PostMessage usage)
@@ -260,7 +260,7 @@ fn spawn_taskbar_watchdog() {
         let Some(old) = stored else {
             continue;
         };
-        let taskbars = native_interop::find_taskbars();
+        let taskbars = native::find_taskbars();
         if !taskbars.is_empty() && !taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
             let new = taskbars[0].hwnd;
             diagnose::log(format!(
@@ -405,7 +405,7 @@ fn save_state_settings() {
     }
 }
 
-fn tray_icon_data_from_state() -> Option<tray_icon::TrayIconData> {
+fn tray_icon_data_from_state() -> Option<tray::TrayIconData> {
     let state = lock_state();
     match state.as_ref() {
         Some(s) if s.last_poll_ok => {
@@ -440,13 +440,13 @@ fn tray_icon_data_from_state() -> Option<tray_icon::TrayIconData> {
                 format!("{} {}", strings.codex_model, tooltip_windows.join(" | "))
             };
 
-            Some(tray_icon::TrayIconData {
+            Some(tray::TrayIconData {
                 used_percent,
                 display_percent,
                 tooltip,
             })
         }
-        Some(s) => Some(tray_icon::TrayIconData {
+        Some(s) => Some(tray::TrayIconData {
             used_percent: None,
             display_percent: None,
             tooltip: s.language.strings().window_title.to_string(),
@@ -478,7 +478,7 @@ fn preferred_tray_window(
 
 fn sync_tray_icons(hwnd: HWND) {
     if let Some(icon) = tray_icon_data_from_state() {
-        tray_icon::sync(hwnd, &icon);
+        tray::sync(hwnd, &icon);
     }
 }
 
@@ -505,7 +505,7 @@ fn toggle_widget_visibility(hwnd: HWND) {
 }
 
 fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
-    let taskbars = native_interop::find_taskbars();
+    let taskbars = native::find_taskbars();
     if taskbars.is_empty() {
         diagnose::log("taskbar not found; using fallback popup window");
         return false;
@@ -528,12 +528,12 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         state.as_mut().and_then(|s| s.win_event_hook.take())
     };
     if let Some(hook) = old_hook {
-        native_interop::unhook_win_event(hook);
+        native::unhook_win_event(hook);
     }
 
-    native_interop::embed_in_taskbar(hwnd, taskbar.hwnd);
+    native::embed_in_taskbar(hwnd, taskbar.hwnd);
 
-    let tray_notify = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd");
+    let tray_notify = native::find_child_window(taskbar.hwnd, "TrayNotifyWnd");
     if tray_notify.is_some() {
         diagnose::log("TrayNotifyWnd found");
     } else {
@@ -541,8 +541,8 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
     }
 
     let hook = tray_notify.and_then(|tray_hwnd| {
-        let thread_id = native_interop::get_window_thread_id(tray_hwnd);
-        native_interop::set_tray_event_hook(thread_id, on_tray_location_changed)
+        let thread_id = native::get_window_thread_id(tray_hwnd);
+        native::set_tray_event_hook(thread_id, on_tray_location_changed)
     });
     if hook.is_some() {
         diagnose::log("tray event hook installed");
@@ -561,8 +561,8 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
     true
 }
 
-fn taskbar_at_point(pt: POINT) -> Option<(usize, native_interop::TaskbarWindow)> {
-    native_interop::find_taskbars()
+fn taskbar_at_point(pt: POINT) -> Option<(usize, native::TaskbarWindow)> {
+    native::find_taskbars()
         .into_iter()
         .enumerate()
         .find(|(_, taskbar)| {
@@ -575,8 +575,8 @@ fn taskbar_at_point(pt: POINT) -> Option<(usize, native_interop::TaskbarWindow)>
 
 fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
     let mut tray_left = taskbar_rect.right;
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
+    if let Some(tray_hwnd) = native::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
+        if let Some(tray_rect) = native::get_window_rect_safe(tray_hwnd) {
             tray_left = tray_rect.left;
         }
     }
@@ -667,15 +667,15 @@ fn refresh_usage_texts(state: &mut AppState) {
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
     unsafe {
-        let title = native_interop::wide_str(strings.window_title);
+        let title = native::wide_str(strings.window_title);
         let _ = SetWindowTextW(hwnd, PCWSTR::from_raw(title.as_ptr()));
     }
 }
 
 fn show_info_message(hwnd: HWND, title: &str, message: &str) {
     unsafe {
-        let title_wide = native_interop::wide_str(title);
-        let message_wide = native_interop::wide_str(message);
+        let title_wide = native::wide_str(title);
+        let message_wide = native::wide_str(message);
         let _ = MessageBoxW(
             hwnd,
             PCWSTR::from_raw(message_wide.as_ptr()),
@@ -687,8 +687,8 @@ fn show_info_message(hwnd: HWND, title: &str, message: &str) {
 
 fn show_error_message(hwnd: HWND, title: &str, message: &str) {
     unsafe {
-        let title_wide = native_interop::wide_str(title);
-        let message_wide = native_interop::wide_str(message);
+        let title_wide = native::wide_str(title);
+        let message_wide = native::wide_str(message);
         let _ = MessageBoxW(
             hwnd,
             PCWSTR::from_raw(message_wide.as_ptr()),
@@ -704,8 +704,8 @@ fn show_update_prompt(hwnd: HWND, strings: Strings, release: &ReleaseDescriptor)
         .replace("{version}", &release.latest_version);
 
     unsafe {
-        let title_wide = native_interop::wide_str(strings.update_available);
-        let message_wide = native_interop::wide_str(&message);
+        let title_wide = native::wide_str(strings.update_available);
+        let message_wide = native::wide_str(&message);
         MessageBoxW(
             hwnd,
             PCWSTR::from_raw(message_wide.as_ptr()),
@@ -926,8 +926,8 @@ const STARTUP_REGISTRY_KEY: &str = "CodexUsageTaskbarMonitor";
 /// Returns true only if the startup registry value points to this executable.
 fn is_startup_enabled() -> bool {
     unsafe {
-        let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
-        let key_name = native_interop::wide_str(STARTUP_REGISTRY_KEY);
+        let path = native::wide_str(STARTUP_REGISTRY_PATH);
+        let key_name = native::wide_str(STARTUP_REGISTRY_KEY);
 
         let mut hkey = HKEY::default();
         let result = RegOpenKeyExW(
@@ -993,7 +993,7 @@ fn is_startup_enabled() -> bool {
 
 fn set_startup_enabled(enable: bool) {
     unsafe {
-        let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
+        let path = native::wide_str(STARTUP_REGISTRY_PATH);
 
         let mut hkey = HKEY::default();
         let result = RegOpenKeyExW(
@@ -1007,7 +1007,7 @@ fn set_startup_enabled(enable: bool) {
             return;
         }
 
-        let key_name = native_interop::wide_str(STARTUP_REGISTRY_KEY);
+        let key_name = native::wide_str(STARTUP_REGISTRY_KEY);
 
         if enable {
             let mut exe_buf = [0u16; 260];
@@ -1127,7 +1127,7 @@ pub fn run() {
     // Exception: when relaunched after an explorer restart (ENV_RELAUNCH set),
     // wait for the previous instance to release the mutex, then take over.
     let is_relaunch = std::env::var(ENV_RELAUNCH).is_ok();
-    let mutex_name = native_interop::wide_str("Global\\CodexUsageTaskbarMonitor");
+    let mutex_name = native::wide_str("Global\\CodexUsageTaskbarMonitor");
     let _mutex = unsafe {
         let handle = CreateMutexW(None, true, PCWSTR::from_raw(mutex_name.as_ptr()));
         match handle {
@@ -1159,7 +1159,7 @@ pub fn run() {
         }
     };
 
-    let class_name = native_interop::wide_str("CodexUsageTaskbarMonitor");
+    let class_name = native::wide_str("CodexUsageTaskbarMonitor");
 
     unsafe {
         let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
@@ -1189,7 +1189,7 @@ pub fn run() {
         let install_channel = updater::current_install_channel();
 
         // Create as layered popup (will be reparented into taskbar)
-        let title = native_interop::wide_str(language.strings().window_title);
+        let title = native::wide_str(language.strings().window_title);
         let initial_model_count = 1; // codex-only
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
@@ -1568,7 +1568,7 @@ fn paint_content(
             ((160, 160, 160), (230, 230, 230))
         };
 
-        let left_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
+        let left_brush = CreateSolidBrush(COLORREF(native::colorref(
             div_left.0, div_left.1, div_left.2,
         )));
         let left_rect = RECT {
@@ -1580,7 +1580,7 @@ fn paint_content(
         FillRect(ctx.hdc, &left_rect, left_brush);
         let _ = DeleteObject(left_brush);
 
-        let right_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
+        let right_brush = CreateSolidBrush(COLORREF(native::colorref(
             div_right.0,
             div_right.1,
             div_right.2,
@@ -1601,7 +1601,7 @@ fn paint_content(
         let _ = SetBkMode(ctx.hdc, TRANSPARENT);
         let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));
 
-        let font_name = native_interop::wide_str("Segoe UI");
+        let font_name = native::wide_str("Segoe UI");
         let font = CreateFontW(
             sc(-12),
             0,
@@ -1789,7 +1789,7 @@ fn do_poll(send_hwnd: SendHwnd) {
                     })
                 };
                 if let Some((_strings, title, body)) = balloon {
-                    tray_icon::notify_balloon(hwnd, title, body);
+                    tray::notify_balloon(hwnd, title, body);
                 }
             }
 
@@ -1939,7 +1939,7 @@ fn position_at_taskbar() {
         (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
     };
 
-    let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
+    let taskbar_rect = match native::get_taskbar_rect(taskbar_hwnd) {
         Some(r) => r,
         None => {
             diagnose::log("position_at_taskbar skipped: unable to query taskbar rect");
@@ -1952,8 +1952,8 @@ fn position_at_taskbar() {
     let anchor_top = taskbar_rect.top;
     let anchor_height = taskbar_height;
 
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
+    if let Some(tray_hwnd) = native::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
+        if let Some(tray_rect) = native::get_window_rect_safe(tray_hwnd) {
             tray_left = tray_rect.left;
         }
     }
@@ -1983,7 +1983,7 @@ fn position_at_taskbar() {
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
         let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
+        native::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
         diagnose::log(format!(
             "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
             y - taskbar_rect.top
@@ -1991,7 +1991,7 @@ fn position_at_taskbar() {
     } else {
         // Topmost popup: screen coordinates
         let x = tray_left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y, widget_width, widget_height);
+        native::move_window(hwnd, x, y, widget_width, widget_height);
         diagnose::log(format!(
             "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
         ));
@@ -2235,14 +2235,12 @@ unsafe extern "system" fn wnd_proc(
 
                     // Clamp: don't go past left edge of taskbar
                     if let Some(taskbar_hwnd) = taskbar_hwnd {
-                        if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
+                        if let Some(taskbar_rect) = native::get_taskbar_rect(taskbar_hwnd) {
                             let mut tray_left = taskbar_rect.right;
                             if let Some(tray_hwnd) =
-                                native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
+                                native::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
                             {
-                                if let Some(tray_rect) =
-                                    native_interop::get_window_rect_safe(tray_hwnd)
-                                {
+                                if let Some(tray_rect) = native::get_window_rect_safe(tray_hwnd) {
                                     tray_left = tray_rect.left;
                                 }
                             }
@@ -2287,7 +2285,7 @@ unsafe extern "system" fn wnd_proc(
                     move_target
                 {
                     if embedded {
-                        native_interop::move_window(
+                        native::move_window(
                             hwnd_val,
                             x,
                             y - taskbar_top,
@@ -2295,7 +2293,7 @@ unsafe extern "system" fn wnd_proc(
                             widget_height,
                         );
                     } else {
-                        native_interop::move_window(hwnd_val, x, y, widget_width, widget_height);
+                        native::move_window(hwnd_val, x, y, widget_width, widget_height);
                     }
                 }
             }
@@ -2403,7 +2401,7 @@ unsafe extern "system" fn wnd_proc(
                         state.as_ref().and_then(|s| s.win_event_hook)
                     };
                     if let Some(h) = hook {
-                        native_interop::unhook_win_event(h);
+                        native::unhook_win_event(h);
                     }
                     PostQuitMessage(0);
                 }
@@ -2528,7 +2526,7 @@ unsafe extern "system" fn wnd_proc(
                     save_state_settings();
                     render_layered();
                 }
-                id if id == tray_icon::IDM_TOGGLE_WIDGET => {
+                id if id == tray::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
                 }
                 _ => {}
@@ -2536,14 +2534,14 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         _ if msg == WM_APP_TRAY => {
-            match tray_icon::handle_message(lparam) {
-                tray_icon::TrayAction::ToggleWidget => {
+            match tray::handle_message(lparam) {
+                tray::TrayAction::ToggleWidget => {
                     toggle_widget_visibility(hwnd);
                 }
-                tray_icon::TrayAction::ShowContextMenu => {
+                tray::TrayAction::ShowContextMenu => {
                     show_context_menu(hwnd);
                 }
-                tray_icon::TrayAction::Nothing => {}
+                tray::TrayAction::Nothing => {}
             }
             LRESULT(0)
         }
@@ -2553,9 +2551,9 @@ unsafe extern "system" fn wnd_proc(
                 state.as_ref().and_then(|s| s.win_event_hook)
             };
             if let Some(h) = hook {
-                native_interop::unhook_win_event(h);
+                native::unhook_win_event(h);
             }
-            tray_icon::remove(hwnd);
+            tray::remove(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -2611,7 +2609,7 @@ fn show_context_menu(hwnd: HWND) {
 
         let menu = CreatePopupMenu().unwrap();
 
-        let refresh_str = native_interop::wide_str(strings.refresh);
+        let refresh_str = native::wide_str(strings.refresh);
         let _ = AppendMenuW(
             menu,
             MENU_ITEM_FLAGS(0),
@@ -2628,7 +2626,7 @@ fn show_context_menu(hwnd: HWND) {
             (IDM_FREQ_1HOUR, POLL_1_HOUR, strings.one_hour),
         ];
         for (id, interval, label) in freq_items {
-            let label_str = native_interop::wide_str(label);
+            let label_str = native::wide_str(label);
             let flags = if interval == current_interval {
                 MF_CHECKED
             } else {
@@ -2642,11 +2640,11 @@ fn show_context_menu(hwnd: HWND) {
             );
         }
 
-        let freq_label = native_interop::wide_str(strings.update_frequency);
+        let freq_label = native::wide_str(strings.update_frequency);
 
         // Usage display submenu
         let usage_display_menu = CreatePopupMenu().unwrap();
-        let used_usage_label = native_interop::wide_str(strings.used_usage);
+        let used_usage_label = native::wide_str(strings.used_usage);
         let used_usage_flags = if usage_display == UsageDisplayMode::Used {
             MF_CHECKED
         } else {
@@ -2659,7 +2657,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(used_usage_label.as_ptr()),
         );
 
-        let remaining_usage_label = native_interop::wide_str(strings.remaining_usage);
+        let remaining_usage_label = native::wide_str(strings.remaining_usage);
         let remaining_usage_flags = if usage_display == UsageDisplayMode::Remaining {
             MF_CHECKED
         } else {
@@ -2672,10 +2670,10 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(remaining_usage_label.as_ptr()),
         );
 
-        let usage_display_label = native_interop::wide_str(strings.usage_display);
+        let usage_display_label = native::wide_str(strings.usage_display);
 
         let usage_windows_menu = CreatePopupMenu().unwrap();
-        let five_hour_label = native_interop::wide_str(strings.show_5hour_window);
+        let five_hour_label = native::wide_str(strings.show_5hour_window);
         let five_hour_flags = if show_5hour_window {
             if !show_7day_window {
                 MF_CHECKED | MF_GRAYED
@@ -2692,7 +2690,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(five_hour_label.as_ptr()),
         );
 
-        let seven_day_label = native_interop::wide_str(strings.show_7day_window);
+        let seven_day_label = native::wide_str(strings.show_7day_window);
         let seven_day_flags = if show_7day_window {
             if !show_5hour_window {
                 MF_CHECKED | MF_GRAYED
@@ -2709,12 +2707,12 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(seven_day_label.as_ptr()),
         );
 
-        let usage_windows_label = native_interop::wide_str(strings.usage_windows);
+        let usage_windows_label = native::wide_str(strings.usage_windows);
 
         // Settings submenu
         let settings_menu = CreatePopupMenu().unwrap();
 
-        let startup_str = native_interop::wide_str(strings.start_with_windows);
+        let startup_str = native::wide_str(strings.start_with_windows);
         let startup_flags = if is_startup_enabled() {
             MF_CHECKED
         } else {
@@ -2727,7 +2725,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(startup_str.as_ptr()),
         );
 
-        let reset_pos_str = native_interop::wide_str(strings.reset_position);
+        let reset_pos_str = native::wide_str(strings.reset_position);
         let _ = AppendMenuW(
             settings_menu,
             MENU_ITEM_FLAGS(0),
@@ -2735,7 +2733,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
         );
 
-        let compact_mode_str = native_interop::wide_str(strings.compact_mode);
+        let compact_mode_str = native::wide_str(strings.compact_mode);
         let compact_mode_flags = if compact_mode {
             MF_CHECKED
         } else {
@@ -2749,7 +2747,7 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         let language_menu = CreatePopupMenu().unwrap();
-        let system_label = native_interop::wide_str(strings.system_default);
+        let system_label = native::wide_str(strings.system_default);
         let system_flags = if language_override.is_none() {
             MF_CHECKED
         } else {
@@ -2776,7 +2774,7 @@ fn show_context_menu(hwnd: HWND) {
                 LanguageId::Russian => IDM_LANG_RUSSIAN,
                 LanguageId::PortugueseBrazil => IDM_LANG_PORTUGUESE_BRAZIL,
             };
-            let label_str = native_interop::wide_str(language.native_name());
+            let label_str = native::wide_str(language.native_name());
             let flags = if language_override == Some(language) {
                 MF_CHECKED
             } else {
@@ -2790,7 +2788,7 @@ fn show_context_menu(hwnd: HWND) {
             );
         }
 
-        let language_label = native_interop::wide_str(strings.language);
+        let language_label = native::wide_str(strings.language);
         let _ = AppendMenuW(
             settings_menu,
             MF_POPUP,
@@ -2823,7 +2821,7 @@ fn show_context_menu(hwnd: HWND) {
 
         let version_label =
             version_action_label(strings, language, install_channel, &update_status);
-        let version_str = native_interop::wide_str(&version_label);
+        let version_str = native::wide_str(&version_label);
         let version_flags = if matches!(
             update_status,
             UpdateStatus::Checking | UpdateStatus::Applying
@@ -2839,7 +2837,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(version_str.as_ptr()),
         );
 
-        let settings_label = native_interop::wide_str(strings.settings);
+        let settings_label = native::wide_str(strings.settings);
         let _ = AppendMenuW(
             menu,
             MF_POPUP,
@@ -2847,7 +2845,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(settings_label.as_ptr()),
         );
 
-        let widget_label = native_interop::wide_str(strings.show_widget);
+        let widget_label = native::wide_str(strings.show_widget);
         let widget_flags = if widget_visible {
             MF_CHECKED
         } else {
@@ -2856,13 +2854,13 @@ fn show_context_menu(hwnd: HWND) {
         let _ = AppendMenuW(
             menu,
             widget_flags,
-            tray_icon::IDM_TOGGLE_WIDGET as usize,
+            tray::IDM_TOGGLE_WIDGET as usize,
             PCWSTR::from_raw(widget_label.as_ptr()),
         );
 
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
 
-        let exit_str = native_interop::wide_str(strings.exit);
+        let exit_str = native::wide_str(strings.exit);
         let _ = AppendMenuW(
             menu,
             MENU_ITEM_FLAGS(0),
