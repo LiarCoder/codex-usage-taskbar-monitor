@@ -1,16 +1,19 @@
 //! GDI rendering helpers for widget content.
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{COLORREF, RECT};
+use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, UpdateLayeredWindow, ULW_ALPHA};
 
 use crate::localization::Strings;
 use crate::platform::native::{self, Color};
 
 use super::layout::{
-    sc, BAR_RIGHT_MARGIN, CORNER_RADIUS, DIVIDER_RIGHT_MARGIN, LABEL_RIGHT_MARGIN, LABEL_WIDTH,
-    LEFT_DIVIDER_W, RIGHT_MARGIN, SEGMENT_COUNT, SEGMENT_GAP, SEGMENT_H, SEGMENT_W, TEXT_WIDTH,
+    refresh_dpi, sc, total_widget_width, BAR_RIGHT_MARGIN, CORNER_RADIUS, DIVIDER_RIGHT_MARGIN,
+    LABEL_RIGHT_MARGIN, LABEL_WIDTH, LEFT_DIVIDER_W, RIGHT_MARGIN, SEGMENT_COUNT, SEGMENT_GAP,
+    SEGMENT_H, SEGMENT_W, TEXT_WIDTH, WIDGET_HEIGHT,
 };
+use super::state::lock_state;
 
 /// Bundles the immutable drawing parameters shared across the
 /// GDI rendering helpers so each function stays under clippy's
@@ -326,5 +329,264 @@ pub(crate) fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i3
         let _ = FillRgn(hdc, rgn, brush);
         let _ = DeleteObject(rgn);
         let _ = DeleteObject(brush);
+    }
+}
+
+/// Render widget content and push to the layered window via UpdateLayeredWindow.
+/// Renders fully opaque with the actual taskbar background colour so that
+/// ClearType sub-pixel font rendering can be used for crisp, OS-native text.
+pub(super) fn render_layered() {
+    refresh_dpi();
+    let (
+        hwnd_val,
+        is_dark,
+        embedded,
+        strings,
+        codex_session_pct,
+        codex_session_text,
+        codex_weekly_pct,
+        codex_weekly_text,
+        show_session,
+        show_weekly,
+        compact_mode,
+    ) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (
+                s.hwnd,
+                s.is_dark,
+                s.embedded,
+                s.language.strings(),
+                s.display_percentage(s.session_percent, s.session_available),
+                s.session_text.clone(),
+                s.display_percentage(s.weekly_percent, s.weekly_available),
+                s.weekly_text.clone(),
+                s.show_5hour_window && s.session_available,
+                s.show_7day_window && s.weekly_available,
+                s.compact_mode,
+            ),
+            None => return,
+        }
+    };
+
+    let hwnd = hwnd_val.to_hwnd();
+
+    // For non-embedded fallback, just invalidate and let WM_PAINT handle it
+    if !embedded {
+        unsafe {
+            let _ = InvalidateRect(hwnd, None, false);
+        }
+        return;
+    }
+
+    let width = total_widget_width();
+    let height = sc(WIDGET_HEIGHT);
+
+    let codex_accent = accent_color(is_dark);
+    let track = if is_dark {
+        Color::from_hex("#444444")
+    } else {
+        Color::from_hex("#AAAAAA")
+    };
+    let text_color = if is_dark {
+        Color::from_hex("#888888")
+    } else {
+        Color::from_hex("#404040")
+    };
+    let bg_color = if is_dark {
+        Color::from_hex("#1C1C1C")
+    } else {
+        Color::from_hex("#F3F3F3")
+    };
+
+    unsafe {
+        let screen_dc = GetDC(hwnd);
+
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height, // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: 0, // BI_RGB
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        let dib =
+            CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
+
+        if dib.is_invalid() || bits.is_null() {
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(hwnd, screen_dc);
+            return;
+        }
+
+        let old_bmp = SelectObject(mem_dc, dib);
+        let pixel_count = (width * height) as usize;
+
+        // Render once with the actual taskbar background colour.
+        // Using an opaque background lets us use CLEARTYPE_QUALITY for
+        // sub-pixel font rendering that matches the rest of the OS.
+        let ctx = RenderContext {
+            hdc: mem_dc,
+            is_dark,
+            text_color,
+            accent: codex_accent,
+            track,
+            compact_mode,
+        };
+        paint_content(
+            &ctx,
+            width,
+            height,
+            &bg_color,
+            strings,
+            codex_session_pct,
+            &codex_session_text,
+            codex_weekly_pct,
+            &codex_weekly_text,
+            show_session,
+            show_weekly,
+        );
+
+        // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
+        // Content pixels → fully opaque (preserves ClearType sub-pixel rendering).
+        let bg_bgr = bg_color.to_colorref();
+        let pixel_data = std::slice::from_raw_parts_mut(bits as *mut u32, pixel_count);
+        for px in pixel_data.iter_mut() {
+            let rgb = *px & 0x00FFFFFF;
+            if rgb == bg_bgr {
+                *px = 0x01000000;
+            } else {
+                *px = rgb | 0xFF000000;
+            }
+        }
+
+        // Push to window via UpdateLayeredWindow
+        let pt_src = POINT { x: 0, y: 0 };
+        let sz = SIZE {
+            cx: width,
+            cy: height,
+        };
+        let blend = BLENDFUNCTION {
+            BlendOp: 0, // AC_SRC_OVER
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: 1, // AC_SRC_ALPHA
+        };
+
+        let _ = UpdateLayeredWindow(
+            hwnd,
+            screen_dc,
+            None,
+            Some(&sz),
+            mem_dc,
+            Some(&pt_src),
+            COLORREF(0),
+            Some(&blend),
+            ULW_ALPHA,
+        );
+
+        // Cleanup
+        SelectObject(mem_dc, old_bmp);
+        let _ = DeleteObject(dib);
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(hwnd, screen_dc);
+    }
+}
+
+/// Paint for non-embedded fallback (normal WM_PAINT path)
+pub(super) fn paint(hdc: HDC, hwnd: HWND) {
+    let (
+        is_dark,
+        strings,
+        codex_session_pct,
+        codex_session_text,
+        codex_weekly_pct,
+        codex_weekly_text,
+        show_session,
+        show_weekly,
+        compact_mode,
+    ) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (
+                s.is_dark,
+                s.language.strings(),
+                s.display_percentage(s.session_percent, s.session_available),
+                s.session_text.clone(),
+                s.display_percentage(s.weekly_percent, s.weekly_available),
+                s.weekly_text.clone(),
+                s.show_5hour_window && s.session_available,
+                s.show_7day_window && s.weekly_available,
+                s.compact_mode,
+            ),
+            None => return,
+        }
+    };
+
+    let codex_accent = accent_color(is_dark);
+    let track = if is_dark {
+        Color::from_hex("#444444")
+    } else {
+        Color::from_hex("#AAAAAA")
+    };
+    let text_color = if is_dark {
+        Color::from_hex("#888888")
+    } else {
+        Color::from_hex("#404040")
+    };
+    let bg_color = if is_dark {
+        Color::from_hex("#1C1C1C")
+    } else {
+        Color::from_hex("#F3F3F3")
+    };
+
+    unsafe {
+        let mut client_rect = RECT::default();
+        let _ = GetClientRect(hwnd, &mut client_rect);
+        let width = client_rect.right - client_rect.left;
+        let height = client_rect.bottom - client_rect.top;
+
+        if width <= 0 || height <= 0 {
+            return;
+        }
+
+        let mem_dc = CreateCompatibleDC(hdc);
+        let mem_bmp = CreateCompatibleBitmap(hdc, width, height);
+        let old_bmp = SelectObject(mem_dc, mem_bmp);
+
+        let ctx = RenderContext {
+            hdc: mem_dc,
+            is_dark,
+            text_color,
+            accent: codex_accent,
+            track,
+            compact_mode,
+        };
+        paint_content(
+            &ctx,
+            width,
+            height,
+            &bg_color,
+            strings,
+            codex_session_pct,
+            &codex_session_text,
+            codex_weekly_pct,
+            &codex_weekly_text,
+            show_session,
+            show_weekly,
+        );
+
+        let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
+
+        SelectObject(mem_dc, old_bmp);
+        let _ = DeleteObject(mem_bmp);
+        let _ = DeleteDC(mem_dc);
     }
 }
