@@ -1,7 +1,7 @@
 use windows::core::PCWSTR;
 use windows::Win32::System::Registry::*;
 
-use crate::native_interop::wide_str;
+use crate::platform::native::wide_str;
 
 const REGISTRY_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
 const REGISTRY_KEY: &str = "SystemUsesLightTheme";

@@ -7,7 +7,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::native_interop::{self, Color, WM_APP_TRAY};
+use crate::platform::native::{self, Color, WM_APP_TRAY};
 
 /// Stable notification-icon ID so the shell recognises the icon after an
 /// explorer.exe restart.
@@ -143,7 +143,7 @@ pub fn create_icon(used_percent: Option<f64>, display_percent: Option<f64>) -> H
         let _ = DeleteObject(br_fill);
 
         // Draw centered percentage text
-        let font_name = native_interop::wide_str("Arial Bold");
+        let font_name = native::wide_str("Arial Bold");
         let font = CreateFontW(
             font_h,
             0,
