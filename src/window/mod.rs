@@ -29,6 +29,12 @@ mod layout;
 use layout::*;
 mod settings;
 use settings::*;
+mod render;
+use render::*;
+mod positioning;
+use positioning::*;
+mod menu;
+use menu::*;
 
 /// Wrapper to make HWND sendable across threads (safe for PostMessage usage)
 #[derive(Clone, Copy)]
@@ -125,32 +131,6 @@ const POLL_1_MIN: u32 = 60_000;
 const POLL_5_MIN: u32 = 300_000;
 pub(crate) const POLL_15_MIN: u32 = 900_000;
 const POLL_1_HOUR: u32 = 3_600_000;
-
-// Menu item IDs for update frequency
-const IDM_FREQ_1MIN: u16 = 10;
-const IDM_FREQ_5MIN: u16 = 11;
-const IDM_FREQ_15MIN: u16 = 12;
-const IDM_FREQ_1HOUR: u16 = 13;
-const IDM_START_WITH_WINDOWS: u16 = 20;
-const IDM_RESET_POSITION: u16 = 30;
-const IDM_VERSION_ACTION: u16 = 31;
-const IDM_COMPACT_MODE: u16 = 32;
-const IDM_SHOW_5HOUR_WINDOW: u16 = 33;
-const IDM_SHOW_7DAY_WINDOW: u16 = 34;
-const IDM_LANG_SYSTEM: u16 = 40;
-const IDM_LANG_ENGLISH: u16 = 41;
-const IDM_LANG_DUTCH: u16 = 42;
-const IDM_LANG_SPANISH: u16 = 43;
-const IDM_LANG_FRENCH: u16 = 44;
-const IDM_LANG_GERMAN: u16 = 45;
-const IDM_LANG_JAPANESE: u16 = 46;
-const IDM_LANG_KOREAN: u16 = 47;
-const IDM_LANG_TRADITIONAL_CHINESE: u16 = 48;
-const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
-const IDM_LANG_RUSSIAN: u16 = 49;
-const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
-const IDM_USAGE_DISPLAY_USED: u16 = 80;
-const IDM_USAGE_DISPLAY_REMAINING: u16 = 81;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -460,46 +440,6 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
     true
 }
 
-fn taskbar_at_point(pt: POINT) -> Option<(usize, native::TaskbarWindow)> {
-    native::find_taskbars()
-        .into_iter()
-        .enumerate()
-        .find(|(_, taskbar)| {
-            pt.x >= taskbar.rect.left
-                && pt.x < taskbar.rect.right
-                && pt.y >= taskbar.rect.top
-                && pt.y < taskbar.rect.bottom
-        })
-}
-
-fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    let mut tray_left = taskbar_rect.right;
-    if let Some(tray_hwnd) = native::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
-    }
-    tray_left
-}
-
-fn clamp_offset_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT, offset: i32) -> i32 {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let max_offset = (tray_left - taskbar_rect.left - total_widget_width()).max(0);
-    offset.clamp(0, max_offset)
-}
-
-fn offset_for_drop_point(
-    taskbar_hwnd: HWND,
-    taskbar_rect: RECT,
-    pt: POINT,
-    drag_start_client_x: i32,
-) -> i32 {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let desired_left = pt.x - taskbar_rect.left - drag_start_client_x;
-    let offset = tray_left - taskbar_rect.left - total_widget_width() - desired_left;
-    clamp_offset_for_taskbar(taskbar_hwnd, taskbar_rect, offset)
-}
-
 fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -638,34 +578,6 @@ fn update_language_change() -> bool {
 
     apply_language_to_state(app_state, None);
     true
-}
-
-fn version_action_label(
-    strings: Strings,
-    language: LanguageId,
-    install_channel: InstallChannel,
-    status: &UpdateStatus,
-) -> String {
-    let current = env!("CARGO_PKG_VERSION");
-    match status {
-        UpdateStatus::Idle => format!("v{current} - {}", strings.check_for_updates),
-        UpdateStatus::Checking => format!("v{current} - {}", strings.checking_for_updates),
-        UpdateStatus::Applying => format!("v{current} - {}", strings.applying_update),
-        UpdateStatus::UpToDate => format!("v{current} - {}", strings.up_to_date_short),
-        UpdateStatus::Available(release) => match install_channel {
-            InstallChannel::Portable => {
-                format!(
-                    "v{current} - {} v{}",
-                    strings.update_to, release.latest_version
-                )
-            }
-            InstallChannel::Winget => format!(
-                "v{current} - {} v{}",
-                localization::update_via_winget(language),
-                release.latest_version
-            ),
-        },
-    }
 }
 
 fn begin_update_check(hwnd: HWND, interactive: bool) {
@@ -930,14 +842,6 @@ fn set_startup_enabled(enable: bool) {
         }
 
         let _ = RegCloseKey(hkey);
-    }
-}
-
-fn accent_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#F5F5F5")
-    } else {
-        Color::from_hex("#1F1F1F")
     }
 }
 
@@ -1351,169 +1255,6 @@ fn render_layered() {
         let _ = DeleteObject(dib);
         let _ = DeleteDC(mem_dc);
         ReleaseDC(hwnd, screen_dc);
-    }
-}
-
-/// Bundles the immutable drawing parameters shared across the
-/// GDI rendering helpers so each function stays under clippy's
-/// 7-argument threshold.
-struct RenderContext {
-    hdc: HDC,
-    is_dark: bool,
-    text_color: Color,
-    accent: Color,
-    track: Color,
-    compact_mode: bool,
-}
-
-/// Paint all widget content onto a DC with a given background color.
-#[allow(clippy::too_many_arguments)]
-fn paint_content(
-    ctx: &RenderContext,
-    width: i32,
-    height: i32,
-    bg: &Color,
-    strings: Strings,
-    session_pct: f64,
-    session_text: &str,
-    weekly_pct: f64,
-    weekly_text: &str,
-    show_session: bool,
-    show_weekly: bool,
-) {
-    unsafe {
-        let client_rect = RECT {
-            left: 0,
-            top: 0,
-            right: width,
-            bottom: height,
-        };
-
-        let bg_brush = CreateSolidBrush(COLORREF(bg.to_colorref()));
-        FillRect(ctx.hdc, &client_rect, bg_brush);
-        let _ = DeleteObject(bg_brush);
-
-        // Left divider
-        let divider_h = sc(25);
-        let divider_top = (height - divider_h) / 2;
-        let divider_bottom = divider_top + divider_h;
-
-        let (div_left, div_right) = if ctx.is_dark {
-            ((80, 80, 80), (40, 40, 40))
-        } else {
-            ((160, 160, 160), (230, 230, 230))
-        };
-
-        let left_brush = CreateSolidBrush(COLORREF(native::colorref(
-            div_left.0, div_left.1, div_left.2,
-        )));
-        let left_rect = RECT {
-            left: 0,
-            top: divider_top,
-            right: sc(2),
-            bottom: divider_bottom,
-        };
-        FillRect(ctx.hdc, &left_rect, left_brush);
-        let _ = DeleteObject(left_brush);
-
-        let right_brush = CreateSolidBrush(COLORREF(native::colorref(
-            div_right.0,
-            div_right.1,
-            div_right.2,
-        )));
-        let right_rect = RECT {
-            left: sc(2),
-            top: divider_top,
-            right: sc(3),
-            bottom: divider_bottom,
-        };
-        FillRect(ctx.hdc, &right_rect, right_brush);
-        let _ = DeleteObject(right_brush);
-
-        let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row2_y = height - sc(5) - sc(SEGMENT_H);
-        let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
-
-        let _ = SetBkMode(ctx.hdc, TRANSPARENT);
-        let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));
-
-        let font_name = native::wide_str("Segoe UI");
-        let font = CreateFontW(
-            sc(-12),
-            0,
-            0,
-            0,
-            FW_MEDIUM.0 as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET.0 as u32,
-            OUT_TT_PRECIS.0 as u32,
-            CLIP_DEFAULT_PRECIS.0 as u32,
-            CLEARTYPE_QUALITY.0 as u32,
-            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
-            PCWSTR::from_raw(font_name.as_ptr()),
-        );
-        let old_font = SelectObject(ctx.hdc, font);
-
-        match (show_session, show_weekly) {
-            (true, true) => {
-                draw_row(
-                    ctx,
-                    content_x,
-                    row1_y,
-                    strings.session_window,
-                    session_pct,
-                    session_text,
-                );
-                draw_row(
-                    ctx,
-                    content_x,
-                    row2_y,
-                    strings.weekly_window,
-                    weekly_pct,
-                    weekly_text,
-                );
-            }
-            (true, false) => draw_row(
-                ctx,
-                content_x,
-                (height - sc(SEGMENT_H)) / 2,
-                strings.session_window,
-                session_pct,
-                session_text,
-            ),
-            (false, true) => draw_row(
-                ctx,
-                content_x,
-                (height - sc(SEGMENT_H)) / 2,
-                strings.weekly_window,
-                weekly_pct,
-                weekly_text,
-            ),
-            (false, false) => draw_centered_text(ctx, width, height, strings.no_data),
-        }
-
-        SelectObject(ctx.hdc, old_font);
-        let _ = DeleteObject(font);
-    }
-}
-
-fn draw_centered_text(ctx: &RenderContext, width: i32, height: i32, text: &str) {
-    unsafe {
-        let mut text_wide: Vec<u16> = text.encode_utf16().collect();
-        let mut rect = RECT {
-            left: sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN),
-            top: 0,
-            right: width - sc(RIGHT_MARGIN),
-            bottom: height,
-        };
-        let _ = DrawTextW(
-            ctx.hdc,
-            &mut text_wide,
-            &mut rect,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
     }
 }
 
@@ -2795,145 +2536,6 @@ fn paint(hdc: HDC, hwnd: HWND) {
         SelectObject(mem_dc, old_bmp);
         let _ = DeleteObject(mem_bmp);
         let _ = DeleteDC(mem_dc);
-    }
-}
-
-fn draw_row(ctx: &RenderContext, x: i32, y: i32, label: &str, percent: f64, bar_text: &str) {
-    let seg_h = sc(SEGMENT_H);
-    let segment_count = SEGMENT_COUNT;
-    // codex-only: always use the generic text color
-    let value_color = ctx.text_color;
-
-    unsafe {
-        let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));
-        let mut label_wide: Vec<u16> = label.encode_utf16().collect();
-        let mut label_rect = RECT {
-            left: x,
-            top: y,
-            right: x + sc(LABEL_WIDTH),
-            bottom: y + seg_h,
-        };
-        let _ = DrawTextW(
-            ctx.hdc,
-            &mut label_wide,
-            &mut label_rect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        );
-
-        let model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
-        draw_usage_bar(
-            ctx,
-            model_x,
-            y,
-            segment_count,
-            percent,
-            bar_text,
-            &value_color,
-        );
-    }
-}
-
-fn draw_usage_bar(
-    ctx: &RenderContext,
-    bar_x: i32,
-    y: i32,
-    segment_count: i32,
-    percent: f64,
-    text: &str,
-    text_color: &Color,
-) {
-    let seg_w = sc(SEGMENT_W);
-    let seg_h = sc(SEGMENT_H);
-    let seg_gap = sc(SEGMENT_GAP);
-    let corner_r = sc(CORNER_RADIUS);
-
-    unsafe {
-        if !ctx.compact_mode {
-            let percent_clamped = percent.clamp(0.0, 100.0);
-            let segment_percent = 100.0 / segment_count as f64;
-
-            for i in 0..segment_count {
-                let seg_x = bar_x + i * (seg_w + seg_gap);
-                let seg_start = (i as f64) * segment_percent;
-                let seg_end = seg_start + segment_percent;
-
-                let seg_rect = RECT {
-                    left: seg_x,
-                    top: y,
-                    right: seg_x + seg_w,
-                    bottom: y + seg_h,
-                };
-
-                if percent_clamped >= seg_end {
-                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.accent, corner_r);
-                } else if percent_clamped <= seg_start {
-                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.track, corner_r);
-                } else {
-                    draw_rounded_rect(ctx.hdc, &seg_rect, &ctx.track, corner_r);
-                    let fraction = (percent_clamped - seg_start) / segment_percent;
-                    let fill_width = (seg_w as f64 * fraction) as i32;
-                    if fill_width > 0 {
-                        let fill_rect = RECT {
-                            left: seg_x,
-                            top: y,
-                            right: seg_x + fill_width,
-                            bottom: y + seg_h,
-                        };
-                        let rgn = CreateRoundRectRgn(
-                            seg_rect.left,
-                            seg_rect.top,
-                            seg_rect.right + 1,
-                            seg_rect.bottom + 1,
-                            corner_r * 2,
-                            corner_r * 2,
-                        );
-                        let _ = SelectClipRgn(ctx.hdc, rgn);
-                        let brush = CreateSolidBrush(COLORREF(ctx.accent.to_colorref()));
-                        FillRect(ctx.hdc, &fill_rect, brush);
-                        let _ = DeleteObject(brush);
-                        let _ = SelectClipRgn(ctx.hdc, HRGN::default());
-                        let _ = DeleteObject(rgn);
-                    }
-                }
-            }
-        }
-
-        let text_x = if ctx.compact_mode {
-            bar_x
-        } else {
-            bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN)
-        };
-        let mut text_wide: Vec<u16> = text.encode_utf16().collect();
-        let mut text_rect = RECT {
-            left: text_x,
-            top: y,
-            right: text_x + sc(TEXT_WIDTH),
-            bottom: y + seg_h,
-        };
-        let _ = SetTextColor(ctx.hdc, COLORREF(text_color.to_colorref()));
-        let _ = DrawTextW(
-            ctx.hdc,
-            &mut text_wide,
-            &mut text_rect,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        );
-    }
-}
-
-fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i32) {
-    unsafe {
-        let brush = CreateSolidBrush(COLORREF(color.to_colorref()));
-        let rgn = CreateRoundRectRgn(
-            rect.left,
-            rect.top,
-            rect.right + 1,
-            rect.bottom + 1,
-            radius * 2,
-            radius * 2,
-        );
-        let _ = FillRgn(hdc, rgn, brush);
-        let _ = DeleteObject(rgn);
-        let _ = DeleteObject(brush);
     }
 }
 
