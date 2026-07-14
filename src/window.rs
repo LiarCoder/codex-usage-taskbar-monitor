@@ -94,10 +94,6 @@ impl AppState {
     fn display_percentage(&self, used_percentage: f64, available: bool) -> f64 {
         display_percentage_for_availability(self.usage_display, used_percentage, available)
     }
-
-    fn codex_usage_available(&self) -> bool {
-        self.data.is_some()
-    }
 }
 
 fn display_percentage_for_availability(
@@ -412,24 +408,71 @@ fn save_state_settings() {
 fn tray_icon_data_from_state() -> Option<tray_icon::TrayIconData> {
     let state = lock_state();
     match state.as_ref() {
-        Some(s) if s.last_poll_ok => Some(tray_icon::TrayIconData {
-            used_percent: Some(s.session_percent),
-            display_percent: Some(
-                s.display_percentage(s.session_percent, s.codex_usage_available()),
-            ),
-            tooltip: format!(
-                "{} 5h: {} | 7d: {}",
-                s.language.strings().codex_model,
-                s.session_text,
-                s.weekly_text
-            ),
-        }),
+        Some(s) if s.last_poll_ok => {
+            let strings = s.language.strings();
+            let mut tooltip_windows = Vec::new();
+            if s.show_5hour_window && s.session_available {
+                tooltip_windows.push(format!("5h: {}", s.session_text));
+            }
+            if s.show_7day_window && s.weekly_available {
+                tooltip_windows.push(format!("7d: {}", s.weekly_text));
+            }
+
+            let (used_percent, display_percent) = match preferred_tray_window(
+                s.show_5hour_window,
+                s.session_available,
+                s.show_7day_window,
+                s.weekly_available,
+            ) {
+                Some(TrayUsageWindow::Session) => (
+                    Some(s.session_percent),
+                    Some(s.display_percentage(s.session_percent, true)),
+                ),
+                Some(TrayUsageWindow::Weekly) => (
+                    Some(s.weekly_percent),
+                    Some(s.display_percentage(s.weekly_percent, true)),
+                ),
+                None => (None, None),
+            };
+            let tooltip = if tooltip_windows.is_empty() {
+                format!("{}: {}", strings.codex_model, strings.no_data)
+            } else {
+                format!("{} {}", strings.codex_model, tooltip_windows.join(" | "))
+            };
+
+            Some(tray_icon::TrayIconData {
+                used_percent,
+                display_percent,
+                tooltip,
+            })
+        }
         Some(s) => Some(tray_icon::TrayIconData {
             used_percent: None,
             display_percent: None,
             tooltip: s.language.strings().window_title.to_string(),
         }),
         None => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrayUsageWindow {
+    Session,
+    Weekly,
+}
+
+fn preferred_tray_window(
+    show_5hour_window: bool,
+    session_available: bool,
+    show_7day_window: bool,
+    weekly_available: bool,
+) -> Option<TrayUsageWindow> {
+    if show_5hour_window && session_available {
+        Some(TrayUsageWindow::Session)
+    } else if show_7day_window && weekly_available {
+        Some(TrayUsageWindow::Weekly)
+    } else {
+        None
     }
 }
 
@@ -2409,6 +2452,7 @@ unsafe extern "system" fn wnd_proc(
                     if changed {
                         save_state_settings();
                         render_layered();
+                        sync_tray_icons(hwnd);
                     }
                 }
                 IDM_START_WITH_WINDOWS => {
@@ -3124,5 +3168,25 @@ mod tests {
 
         assert!(json.contains(r#""show_5hour_window":true"#));
         assert!(json.contains(r#""show_7day_window":true"#));
+    }
+
+    #[test]
+    fn tray_icon_prefers_the_5_hour_window_when_it_is_visible_and_available() {
+        assert_eq!(
+            preferred_tray_window(true, true, true, true),
+            Some(TrayUsageWindow::Session)
+        );
+    }
+
+    #[test]
+    fn tray_icon_falls_back_to_the_7_day_window_when_5_hour_is_hidden_or_missing() {
+        assert_eq!(
+            preferred_tray_window(false, true, true, true),
+            Some(TrayUsageWindow::Weekly)
+        );
+        assert_eq!(
+            preferred_tray_window(true, false, true, true),
+            Some(TrayUsageWindow::Weekly)
+        );
     }
 }
