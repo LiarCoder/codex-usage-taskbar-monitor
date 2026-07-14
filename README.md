@@ -5,7 +5,7 @@
 
 ![Screenshot](.github/animation.gif)
 
-A lightweight Windows usage monitor for the Codex CLI. It displays your current 5-hour and 7-day Codex rate-limit windows with live reset countdowns, so your remaining quota is always visible.
+A lightweight Windows usage monitor for the Codex CLI. It displays available Codex usage windows with live reset countdowns, so your remaining quota is always visible.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ codex-usage-taskbar-monitor
 
 The taskbar Widget and its tray icon show Codex usage. Drag the Widget's left divider to adjust its position or move it to another taskbar. Left-click the tray icon to show or hide the Widget.
 
-The right-click menu retains update frequency, usage-display mode, startup, position reset, compact mode, language, update checks, and other application settings. Compact Mode hides the percentage bars and shows only usage text to save taskbar space. Provider selection is intentionally omitted because Codex is always enabled. Choose **Used** or **Remaining** to control the percentages shown in the bars, badge, and tooltip.
+The right-click menu retains update frequency, usage-display mode, startup, position reset, compact mode, language, update checks, and other application settings. Under **Settings > Usage windows**, choose whether the Widget shows the 7-day and 5-hour limits. The 5-hour limit is deprecated and may not be available from Codex. Compact Mode hides the percentage bars and shows only usage text to save taskbar space. Provider selection is intentionally omitted because Codex is always enabled. Choose **Used** or **Remaining** to control the percentages shown in the bars, badge, and tooltip.
 
 ## Diagnostics
 
