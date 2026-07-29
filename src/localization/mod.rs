@@ -193,6 +193,16 @@ pub struct Strings {
     pub second_suffix: &'static str,
     pub codex_token_expired_title: &'static str,
     pub codex_token_expired_body: &'static str,
+    pub radar_recommendation: &'static str,
+    pub radar_iq_per_dollar: &'static str,
+    pub radar_intelligence_weighted: &'static str,
+    pub radar_tooltip_header: &'static str,
+    pub radar_cached_warning: &'static str,
+    pub radar_loading: &'static str,
+    pub radar_data_unavailable: &'static str,
+    pub radar_fetch_error: &'static str,
+    pub radar_no_eligible: &'static str,
+    pub radar_just_now: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

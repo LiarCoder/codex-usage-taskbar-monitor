@@ -47,4 +47,14 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body:
         "請在終端機中執行 'codex'，並依照登入提示操作。完成後，請重新整理或重新啟動此應用程式。",
     second_suffix: "秒",
+    radar_recommendation: "雷達推薦",
+    radar_iq_per_dollar: "IQ/$",
+    radar_intelligence_weighted: "偏智力",
+    radar_tooltip_header: "CodexRadar · {age}前更新 · 非個人化社群推薦",
+    radar_cached_warning: "快取資料 · 可能已過期",
+    radar_loading: "正在取得雷達推薦資料...",
+    radar_data_unavailable: "資料暫時無法使用",
+    radar_fetch_error: "雷達推薦資料取得異常",
+    radar_no_eligible: "暫無符合 IQ ≥ 90 的組合",
+    radar_just_now: "剛剛",
 };

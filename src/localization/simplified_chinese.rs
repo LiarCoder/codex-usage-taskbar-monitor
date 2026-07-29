@@ -47,4 +47,14 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body:
         "请在终端中运行 'codex'，并按登录提示操作。完成后，请刷新或重新启动此应用程序。",
     second_suffix: "秒",
+    radar_recommendation: "雷达推荐",
+    radar_iq_per_dollar: "IQ/$",
+    radar_intelligence_weighted: "偏智力",
+    radar_tooltip_header: "CodexRadar · {age}前更新 · 非个性化社区推荐",
+    radar_cached_warning: "缓存数据 · 可能已过期",
+    radar_loading: "正在获取雷达推荐数据...",
+    radar_data_unavailable: "数据暂不可用",
+    radar_fetch_error: "雷达推荐数据获取异常",
+    radar_no_eligible: "暂无符合 IQ ≥ 90 的组合",
+    radar_just_now: "刚刚",
 };

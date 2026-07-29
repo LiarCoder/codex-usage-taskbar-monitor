@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -49,6 +49,8 @@ mod widget;
 use widget::*;
 mod radar;
 use radar::*;
+mod tooltip;
+use tooltip::*;
 
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
 

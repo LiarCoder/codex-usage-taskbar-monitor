@@ -46,4 +46,15 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_title: "Error de autenticacion de Codex",
     codex_token_expired_body: "Ejecuta 'codex' en una terminal y sigue las indicaciones de inicio de sesion. Despues, actualiza o reinicia esta aplicacion.",
     second_suffix: "s",
+    radar_recommendation: "Recomendación radar",
+    radar_iq_per_dollar: "IQ/$",
+    radar_intelligence_weighted: "Prioridad IQ",
+    radar_tooltip_header:
+        "CodexRadar · Actualizado hace {age} · Recomendación comunitaria no personalizada",
+    radar_cached_warning: "Datos en caché · Pueden estar desactualizados",
+    radar_loading: "Obteniendo recomendaciones de CodexRadar...",
+    radar_data_unavailable: "Datos temporalmente no disponibles",
+    radar_fetch_error: "No se pudieron obtener las recomendaciones de CodexRadar",
+    radar_no_eligible: "No hay combinaciones con IQ ≥ 90",
+    radar_just_now: "ahora mismo",
 };

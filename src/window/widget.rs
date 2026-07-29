@@ -117,7 +117,9 @@ pub(super) fn toggle_widget_visibility(hwnd: HWND) {
             position_at_taskbar();
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             render_layered();
+            sync_radar_tooltip(hwnd);
         } else {
+            pop_radar_tooltip();
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }

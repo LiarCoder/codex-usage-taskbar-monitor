@@ -56,6 +56,7 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
     };
 
     radar_data::save_cache(&cache_before_request);
+    refresh_radar_tooltip_text(hwnd);
     unsafe {
         let _ = KillTimer(hwnd, TIMER_RADAR);
     }
@@ -117,6 +118,7 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
 }
 
 pub(super) fn handle_radar_updated(hwnd: HWND) -> LRESULT {
+    sync_radar_tooltip(hwnd);
     let delay = {
         let state = lock_state();
         state

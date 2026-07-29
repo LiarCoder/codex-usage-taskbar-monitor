@@ -7,7 +7,7 @@ mod cache;
 mod client;
 
 pub(crate) use cache::{
-    apply_refresh, load_cache, next_due_in_secs, save_cache, RadarCache,
+    apply_refresh, load_cache, next_due_in_secs, save_cache, CachedSource, RadarCache,
     MANUAL_REFRESH_COOLDOWN_SECS,
 };
 pub(crate) use client::{fetch_recommendations, FetchValidators, RadarRefreshResult, SourceUpdate};

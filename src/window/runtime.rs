@@ -173,6 +173,8 @@ pub(super) fn run() {
                     in_flight: false,
                     request_generation: 0,
                 },
+                radar_tooltip_hwnd: None,
+                radar_tooltip_text: vec![0],
             });
         }
 
@@ -194,6 +196,8 @@ pub(super) fn run() {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
         }
+
+        initialize_radar_tooltip(hwnd);
 
         // Register system tray icon(s)
         sync_tray_icons(hwnd);

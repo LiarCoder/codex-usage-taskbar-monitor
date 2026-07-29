@@ -74,6 +74,8 @@ pub(super) struct AppState {
     pub(super) codex_radar_enabled: bool,
     pub(super) codex_radar_consent_version: u32,
     pub(super) radar: RadarRuntimeState,
+    pub(super) radar_tooltip_hwnd: Option<HWND>,
+    pub(super) radar_tooltip_text: Vec<u16>,
 }
 
 unsafe impl Send for AppState {}

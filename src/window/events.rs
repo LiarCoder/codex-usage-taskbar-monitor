@@ -37,6 +37,7 @@ pub(super) unsafe fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             refresh_dpi();
             position_at_taskbar();
             render_layered();
+            sync_radar_tooltip(hwnd);
             LRESULT(0)
         }
         WM_TIMER => handle_timer(hwnd, wparam),
@@ -45,7 +46,7 @@ pub(super) unsafe fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
         WM_APP_UPDATE_CHECK_COMPLETE => handle_update_check_complete(hwnd),
         WM_SETCURSOR => handle_set_cursor(hwnd, msg, wparam, lparam),
         WM_LBUTTONDOWN => handle_left_button_down(hwnd, lparam),
-        WM_MOUSEMOVE => handle_mouse_move(),
+        WM_MOUSEMOVE => handle_mouse_move(hwnd),
         WM_LBUTTONUP => handle_left_button_up(hwnd),
         WM_RBUTTONUP => handle_right_button_up(hwnd),
         WM_COMMAND => handle_command(hwnd, wparam),
@@ -164,6 +165,7 @@ unsafe fn handle_left_button_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
         return LRESULT(0);
     }
 
+    pop_radar_tooltip();
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
     let mut state = lock_state();
@@ -177,11 +179,14 @@ unsafe fn handle_left_button_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     LRESULT(0)
 }
 
-unsafe fn handle_mouse_move() -> LRESULT {
+unsafe fn handle_mouse_move(hwnd: HWND) -> LRESULT {
     let is_dragging = {
         let state = lock_state();
         state.as_ref().map(|s| s.dragging).unwrap_or(false)
     };
+    if !is_dragging {
+        refresh_radar_tooltip_text(hwnd);
+    }
     if is_dragging {
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
@@ -394,6 +399,7 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
             save_state_settings();
             position_at_taskbar();
             render_layered();
+            sync_radar_tooltip(hwnd);
         }
         IDM_SHOW_5HOUR_WINDOW | IDM_SHOW_7DAY_WINDOW => {
             let changed = {
@@ -524,6 +530,7 @@ unsafe fn handle_destroy(hwnd: HWND) -> LRESULT {
     if let Some(h) = hook {
         native::unhook_win_event(h);
     }
+    destroy_radar_tooltip();
     tray::remove(hwnd);
     PostQuitMessage(0);
     LRESULT(0)
