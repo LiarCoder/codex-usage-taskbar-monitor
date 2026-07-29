@@ -139,10 +139,13 @@ pub(crate) fn parse_efficiency_recommendations(
             if !point.iq.is_finite() {
                 return None;
             }
-            valid_points += 1;
 
             let cost = point.average_price_usd?;
-            if point.iq < MIN_RECOMMENDED_IQ || !cost.is_finite() || cost <= 0.0 {
+            if !cost.is_finite() || cost <= 0.0 {
+                return None;
+            }
+            valid_points += 1;
+            if point.iq < MIN_RECOMMENDED_IQ {
                 return None;
             }
 
@@ -403,6 +406,23 @@ mod tests {
     fn rejects_efficiency_payloads_without_valid_points() {
         let json =
             br#"{"schema":2,"points":[{"model":"","effort":"high","iq":90,"average_price_usd":5}]}"#;
+
+        assert_eq!(
+            parse_efficiency_recommendations(json),
+            Err(RadarDataError::InvalidData)
+        );
+    }
+
+    #[test]
+    fn rejects_efficiency_payloads_without_valid_prices() {
+        let json = br#"{
+            "schema": 2,
+            "points": [
+                {"model":"missing","effort":"high","iq":90},
+                {"model":"zero","effort":"high","iq":90,"average_price_usd":0},
+                {"model":"negative","effort":"high","iq":90,"average_price_usd":-1}
+            ]
+        }"#;
 
         assert_eq!(
             parse_efficiency_recommendations(json),
