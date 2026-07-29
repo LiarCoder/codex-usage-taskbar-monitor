@@ -81,6 +81,7 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
         app_state.radar.in_flight = true;
         app_state.radar.request_generation = app_state.radar.request_generation.wrapping_add(1);
         app_state.radar.cache.last_attempt_unix = Some(now);
+        app_state.radar.cache.last_refresh_complete = false;
         if !app_state.radar.cache.has_any_data() {
             app_state.radar.status = RadarStatus::Loading;
         }
@@ -121,6 +122,8 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
             let complete =
                 radar_data::apply_refresh(&mut app_state.radar.cache, refresh, completed_at);
             app_state.radar.in_flight = false;
+            app_state.radar.displaying_cached_data =
+                !complete && app_state.radar.cache.has_any_data();
             app_state.radar.status = if app_state.radar.cache.has_any_data() {
                 RadarStatus::Ready
             } else {

@@ -235,7 +235,7 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
     .unwrap_or(now_unix);
     let age = format_radar_age(now_unix.saturating_sub(oldest_update), strings);
     let mut lines = vec![strings.radar_tooltip_header.replace("{age}", &age)];
-    if !cache.last_refresh_complete {
+    if app_state.radar.displaying_cached_data || !cache.last_refresh_complete {
         lines[0].push_str(" · ");
         lines[0].push_str(strings.radar_cached_warning);
     }
@@ -367,6 +367,7 @@ mod tests {
             radar: RadarRuntimeState {
                 status,
                 cache,
+                displaying_cached_data: false,
                 in_flight: false,
                 request_generation: 0,
             },
@@ -422,6 +423,17 @@ mod tests {
         assert!(text.contains("Cached data · May be outdated"));
         assert!(text.contains("IQ/$  Data temporarily unavailable"));
         assert!(text.contains("IQ-first  Data temporarily unavailable"));
+    }
+
+    #[test]
+    fn marks_fully_restored_data_as_cached() {
+        let mut app_state = state(LanguageId::English, RadarStatus::Ready, full_cache());
+        app_state.radar.displaying_cached_data = true;
+
+        let text = format_radar_tooltip(&app_state, 100 + 60);
+
+        assert!(text.contains("Cached data · May be outdated"));
+        assert!(text.contains("IQ/$  Terra max"));
     }
 
     #[test]

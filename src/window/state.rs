@@ -118,6 +118,7 @@ pub(super) enum RadarStatus {
 pub(super) struct RadarRuntimeState {
     pub(super) status: RadarStatus,
     pub(super) cache: RadarCache,
+    pub(super) displaying_cached_data: bool,
     pub(super) in_flight: bool,
     pub(super) request_generation: u64,
 }
