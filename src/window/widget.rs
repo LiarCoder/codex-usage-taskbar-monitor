@@ -18,6 +18,8 @@ pub(super) fn save_state_settings() {
             usage_display: s.usage_display,
             show_5hour_window: s.show_5hour_window,
             show_7day_window: s.show_7day_window,
+            codex_radar_enabled: s.codex_radar_enabled,
+            codex_radar_consent_version: s.codex_radar_consent_version,
         });
     }
 }
@@ -115,7 +117,9 @@ pub(super) fn toggle_widget_visibility(hwnd: HWND) {
             position_at_taskbar();
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             render_layered();
+            sync_radar_tooltip(hwnd);
         } else {
+            pop_radar_tooltip();
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }

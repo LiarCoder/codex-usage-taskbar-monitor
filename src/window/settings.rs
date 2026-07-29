@@ -47,6 +47,10 @@ pub(crate) struct SettingsFile {
     pub(crate) show_5hour_window: bool,
     #[serde(default = "default_show_usage_window")]
     pub(crate) show_7day_window: bool,
+    #[serde(default)]
+    pub(crate) codex_radar_enabled: bool,
+    #[serde(default)]
+    pub(crate) codex_radar_consent_version: u32,
 }
 
 impl Default for SettingsFile {
@@ -62,6 +66,8 @@ impl Default for SettingsFile {
             usage_display: UsageDisplayMode::Used,
             show_5hour_window: true,
             show_7day_window: true,
+            codex_radar_enabled: false,
+            codex_radar_consent_version: 0,
         }
     }
 }

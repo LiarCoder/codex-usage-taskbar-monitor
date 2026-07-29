@@ -8,6 +8,7 @@ use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 
 use crate::core::models::{UsageData, UsageDisplayMode};
 use crate::localization::LanguageId;
+use crate::radar::RadarCache;
 use crate::updater::{InstallChannel, ReleaseDescriptor};
 
 /// Wrapper to make HWND sendable across threads (safe for PostMessage usage).
@@ -70,6 +71,12 @@ pub(super) struct AppState {
     pub(super) compact_mode: bool,
     pub(super) show_5hour_window: bool,
     pub(super) show_7day_window: bool,
+    pub(super) codex_radar_enabled: bool,
+    pub(super) codex_radar_consent_version: u32,
+    pub(super) radar: RadarRuntimeState,
+    pub(super) radar_tooltip_hwnd: Option<HWND>,
+    pub(super) radar_tooltip_text: Vec<u16>,
+    pub(super) radar_tooltip_hover_pending: bool,
 }
 
 unsafe impl Send for AppState {}
@@ -99,6 +106,22 @@ pub(super) enum UpdateStatus {
     Applying,
     UpToDate,
     Available(ReleaseDescriptor),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RadarStatus {
+    Disabled,
+    Loading,
+    Ready,
+    Error,
+}
+
+pub(super) struct RadarRuntimeState {
+    pub(super) status: RadarStatus,
+    pub(super) cache: RadarCache,
+    pub(super) displaying_cached_data: bool,
+    pub(super) in_flight: bool,
+    pub(super) request_generation: u64,
 }
 
 static STATE: Mutex<Option<AppState>> = Mutex::new(None);
