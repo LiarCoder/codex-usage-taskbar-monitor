@@ -61,5 +61,4 @@ pub(super) const STRINGS: Strings = Strings {
     radar_data_unavailable: "데이터를 일시적으로 사용할 수 없음",
     radar_fetch_error: "CodexRadar 추천 데이터를 가져올 수 없음",
     radar_no_eligible: "IQ ≥ 90 조합 없음",
-    radar_just_now: "방금",
 };

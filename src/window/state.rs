@@ -76,6 +76,7 @@ pub(super) struct AppState {
     pub(super) radar: RadarRuntimeState,
     pub(super) radar_tooltip_hwnd: Option<HWND>,
     pub(super) radar_tooltip_text: Vec<u16>,
+    pub(super) radar_tooltip_hover_pending: bool,
 }
 
 unsafe impl Send for AppState {}

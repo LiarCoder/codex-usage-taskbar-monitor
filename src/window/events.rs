@@ -44,9 +44,14 @@ pub(super) unsafe fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
         WM_APP_USAGE_UPDATED => handle_usage_updated(hwnd),
         WM_APP_RADAR_UPDATED => handle_radar_updated(hwnd),
         WM_APP_UPDATE_CHECK_COMPLETE => handle_update_check_complete(hwnd),
+        WM_NCHITTEST => LRESULT(HTCLIENT as isize),
         WM_SETCURSOR => handle_set_cursor(hwnd, msg, wparam, lparam),
         WM_LBUTTONDOWN => handle_left_button_down(hwnd, lparam),
-        WM_MOUSEMOVE => handle_mouse_move(hwnd),
+        WM_MOUSEMOVE => handle_mouse_move(hwnd, lparam),
+        WM_MOUSELEAVE => {
+            pop_radar_tooltip();
+            LRESULT(0)
+        }
         WM_LBUTTONUP => handle_left_button_up(hwnd),
         WM_RBUTTONUP => handle_right_button_up(hwnd),
         WM_COMMAND => handle_command(hwnd, wparam),
@@ -118,6 +123,9 @@ unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
         TIMER_RADAR => {
             let _ = begin_radar_refresh(hwnd, false);
         }
+        TIMER_RADAR_TOOLTIP => {
+            show_radar_tooltip(hwnd);
+        }
         _ => {}
     }
     LRESULT(0)
@@ -179,7 +187,7 @@ unsafe fn handle_left_button_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     LRESULT(0)
 }
 
-unsafe fn handle_mouse_move(hwnd: HWND) -> LRESULT {
+unsafe fn handle_mouse_move(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     let is_dragging = {
         let state = lock_state();
         state.as_ref().map(|s| s.dragging).unwrap_or(false)
@@ -187,6 +195,9 @@ unsafe fn handle_mouse_move(hwnd: HWND) -> LRESULT {
     if !is_dragging {
         refresh_radar_tooltip_text(hwnd);
     }
+    let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
+    let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+    update_radar_tooltip_hover(hwnd, client_x, client_y);
     if is_dragging {
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
@@ -315,6 +326,7 @@ unsafe fn handle_left_button_up(hwnd: HWND) -> LRESULT {
 }
 
 unsafe fn handle_right_button_up(hwnd: HWND) -> LRESULT {
+    pop_radar_tooltip();
     show_context_menu(hwnd);
     LRESULT(0)
 }

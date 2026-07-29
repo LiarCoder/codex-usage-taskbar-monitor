@@ -62,5 +62,4 @@ pub(super) const STRINGS: Strings = Strings {
     radar_data_unavailable: "Daten vorübergehend nicht verfügbar",
     radar_fetch_error: "CodexRadar-Empfehlungen konnten nicht abgerufen werden",
     radar_no_eligible: "Keine Kombination mit IQ ≥ 90",
-    radar_just_now: "gerade eben",
 };

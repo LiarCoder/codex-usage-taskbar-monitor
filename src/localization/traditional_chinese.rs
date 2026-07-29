@@ -62,5 +62,4 @@ pub(super) const STRINGS: Strings = Strings {
     radar_data_unavailable: "資料暫時無法使用",
     radar_fetch_error: "雷達推薦資料取得異常",
     radar_no_eligible: "暫無符合 IQ ≥ 90 的組合",
-    radar_just_now: "剛剛",
 };

@@ -177,6 +177,7 @@ pub(super) fn run() {
                 },
                 radar_tooltip_hwnd: None,
                 radar_tooltip_text: vec![0],
+                radar_tooltip_hover_pending: false,
             });
         }
 

@@ -62,5 +62,4 @@ pub(super) const STRINGS: Strings = Strings {
     radar_data_unavailable: "数据暂不可用",
     radar_fetch_error: "雷达推荐数据获取异常",
     radar_no_eligible: "暂无符合 IQ ≥ 90 的组合",
-    radar_just_now: "刚刚",
 };
