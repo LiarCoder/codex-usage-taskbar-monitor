@@ -41,6 +41,7 @@ pub(super) unsafe fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
         }
         WM_TIMER => handle_timer(hwnd, wparam),
         WM_APP_USAGE_UPDATED => handle_usage_updated(hwnd),
+        WM_APP_RADAR_UPDATED => handle_radar_updated(hwnd),
         WM_APP_UPDATE_CHECK_COMPLETE => handle_update_check_complete(hwnd),
         WM_SETCURSOR => handle_set_cursor(hwnd, msg, wparam, lparam),
         WM_LBUTTONDOWN => handle_left_button_down(hwnd, lparam),
@@ -112,6 +113,9 @@ unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
         }
         TIMER_UPDATE_CHECK => {
             begin_update_check(hwnd, false);
+        }
+        TIMER_RADAR => {
+            let _ = begin_radar_refresh(hwnd, false);
         }
         _ => {}
     }

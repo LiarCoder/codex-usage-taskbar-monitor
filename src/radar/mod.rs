@@ -3,6 +3,15 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+mod cache;
+mod client;
+
+pub(crate) use cache::{
+    apply_refresh, load_cache, next_due_in_secs, save_cache, RadarCache,
+    MANUAL_REFRESH_COOLDOWN_SECS,
+};
+pub(crate) use client::{fetch_recommendations, FetchValidators, RadarRefreshResult, SourceUpdate};
+
 pub(crate) const MIN_RECOMMENDED_IQ: f64 = 90.0;
 const RADAR_INSIGHTS_SCHEMA: u32 = 1;
 const EFFICIENCY_SCHEMA: u32 = 2;
@@ -17,7 +26,7 @@ pub(crate) struct Recommendation {
     pub(crate) valid_tasks: u32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ComputedRecommendations {
     pub(crate) iq_per_dollar: Option<Recommendation>,
     pub(crate) intelligence_weighted: Option<Recommendation>,

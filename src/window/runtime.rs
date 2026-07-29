@@ -74,6 +74,17 @@ pub(super) fn run() {
         let language_override = settings.language.as_deref().and_then(LanguageId::from_code);
         let language = localization::resolve_language(language_override);
         let install_channel = updater::current_install_channel();
+        let now_unix = now_unix_secs();
+        let radar_cache = crate::radar::load_cache(now_unix);
+        let radar_status = if settings.codex_radar_enabled {
+            if radar_cache.has_any_data() {
+                RadarStatus::Ready
+            } else {
+                RadarStatus::Loading
+            }
+        } else {
+            RadarStatus::Disabled
+        };
 
         // Create as layered popup (will be reparented into taskbar)
         let title = native::wide_str(language.strings().window_title);
@@ -154,6 +165,14 @@ pub(super) fn run() {
                 compact_mode: settings.compact_mode,
                 show_5hour_window: settings.show_5hour_window,
                 show_7day_window: settings.show_7day_window,
+                codex_radar_enabled: settings.codex_radar_enabled,
+                codex_radar_consent_version: settings.codex_radar_consent_version,
+                radar: RadarRuntimeState {
+                    status: radar_status,
+                    cache: radar_cache,
+                    in_flight: false,
+                    request_generation: 0,
+                },
             });
         }
 
@@ -198,6 +217,7 @@ pub(super) fn run() {
                 .unwrap_or(POLL_15_MIN)
         };
         SetTimer(hwnd, TIMER_POLL, initial_poll_ms, None);
+        initialize_radar(hwnd);
 
         // Watch for explorer.exe restarts so we can re-embed and re-add the tray
         // icon (the shell discards tray registrations when it restarts). This

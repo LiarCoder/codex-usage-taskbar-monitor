@@ -15,8 +15,8 @@ use crate::core::diagnose;
 use crate::core::models::UsageDisplayMode;
 use crate::localization::{self, LanguageId, Strings};
 use crate::platform::native::{
-    self, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
-    WM_APP_USAGE_UPDATED,
+    self, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RADAR, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
+    WM_APP_RADAR_UPDATED, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::platform::theme;
 use crate::poller;
@@ -47,6 +47,8 @@ use taskbar::*;
 mod events;
 mod widget;
 use widget::*;
+mod radar;
+use radar::*;
 
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
 
@@ -101,6 +103,8 @@ mod tests {
         assert_eq!(settings.usage_display, UsageDisplayMode::Used);
         assert!(settings.show_5hour_window);
         assert!(settings.show_7day_window);
+        assert!(!settings.codex_radar_enabled);
+        assert_eq!(settings.codex_radar_consent_version, 0);
     }
 
     #[test]
@@ -139,6 +143,21 @@ mod tests {
 
         assert!(json.contains(r#""show_5hour_window":true"#));
         assert!(json.contains(r#""show_7day_window":true"#));
+    }
+
+    #[test]
+    fn codex_radar_preferences_round_trip_through_settings_json() {
+        let settings = SettingsFile {
+            codex_radar_enabled: true,
+            codex_radar_consent_version: 1,
+            ..SettingsFile::default()
+        };
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let decoded: SettingsFile = serde_json::from_str(&json).unwrap();
+
+        assert!(decoded.codex_radar_enabled);
+        assert_eq!(decoded.codex_radar_consent_version, 1);
     }
 
     #[test]
