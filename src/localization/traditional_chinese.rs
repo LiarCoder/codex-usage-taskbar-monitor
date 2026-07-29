@@ -47,6 +47,12 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body:
         "請在終端機中執行 'codex'，並依照登入提示操作。完成後，請重新整理或重新啟動此應用程式。",
     second_suffix: "秒",
+    codex_radar_menu: "CodexRadar",
+    enable_codex_radar: "啟用 CodexRadar",
+    refresh_codex_radar: "立即重新整理推薦資料",
+    view_codex_radar_website: "查看網站",
+    codex_radar_consent_title: "啟用 CodexRadar？",
+    codex_radar_consent_body: "啟用後，本應用程式將定期連線至 CodexRadar，以取得社群推薦資料。\r\n\r\n請求不會傳送 Codex Token、用量資料或專案內容。與一般網站請求相同，CodexRadar 仍可看到 IP 位址、User-Agent 等常規網路資訊。\r\n\r\n是否啟用 CodexRadar？",
     radar_recommendation: "雷達推薦",
     radar_iq_per_dollar: "IQ/$",
     radar_intelligence_weighted: "偏智力",

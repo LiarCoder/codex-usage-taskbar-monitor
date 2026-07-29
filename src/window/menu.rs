@@ -7,11 +7,13 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use crate::core::models::UsageDisplayMode;
 use crate::localization::{self, LanguageId, Strings};
 use crate::platform::native;
+use crate::radar;
 use crate::tray;
 use crate::updater::InstallChannel;
 
 use super::{
-    is_startup_enabled, lock_state, UpdateStatus, POLL_15_MIN, POLL_1_HOUR, POLL_1_MIN, POLL_5_MIN,
+    is_startup_enabled, lock_state, now_unix_secs, UpdateStatus, POLL_15_MIN, POLL_1_HOUR,
+    POLL_1_MIN, POLL_5_MIN,
 };
 
 // Menu item IDs for update frequency
@@ -39,6 +41,21 @@ pub(crate) const IDM_LANG_RUSSIAN: u16 = 49;
 pub(crate) const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 pub(crate) const IDM_USAGE_DISPLAY_USED: u16 = 80;
 pub(crate) const IDM_USAGE_DISPLAY_REMAINING: u16 = 81;
+pub(crate) const IDM_CODEX_RADAR_ENABLED: u16 = 90;
+pub(crate) const IDM_CODEX_RADAR_REFRESH: u16 = 91;
+pub(crate) const IDM_CODEX_RADAR_WEBSITE: u16 = 92;
+
+fn radar_manual_refresh_available(
+    enabled: bool,
+    in_flight: bool,
+    last_attempt_unix: Option<u64>,
+    now_unix: u64,
+) -> bool {
+    enabled
+        && !in_flight
+        && last_attempt_unix
+            .is_none_or(|last| now_unix.saturating_sub(last) >= radar::MANUAL_REFRESH_COOLDOWN_SECS)
+}
 
 /// Builds the human-readable version / update status string shown in the context menu.
 pub(crate) fn version_action_label(
@@ -83,6 +100,8 @@ pub(super) fn show_context_menu(hwnd: HWND) {
             usage_display,
             show_5hour_window,
             show_7day_window,
+            codex_radar_enabled,
+            codex_radar_refresh_available,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -98,6 +117,13 @@ pub(super) fn show_context_menu(hwnd: HWND) {
                     s.usage_display,
                     s.show_5hour_window,
                     s.show_7day_window,
+                    s.codex_radar_enabled,
+                    radar_manual_refresh_available(
+                        s.codex_radar_enabled,
+                        s.radar.in_flight,
+                        s.radar.cache.last_attempt_unix,
+                        now_unix_secs(),
+                    ),
                 ),
                 None => (
                     POLL_15_MIN,
@@ -111,6 +137,8 @@ pub(super) fn show_context_menu(hwnd: HWND) {
                     UsageDisplayMode::Used,
                     true,
                     true,
+                    false,
+                    false,
                 ),
             }
         };
@@ -325,6 +353,49 @@ pub(super) fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(usage_windows_label.as_ptr()),
         );
 
+        let codex_radar_menu = CreatePopupMenu().unwrap();
+        let enable_radar_label = native::wide_str(strings.enable_codex_radar);
+        let enable_radar_flags = if codex_radar_enabled {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            codex_radar_menu,
+            enable_radar_flags,
+            IDM_CODEX_RADAR_ENABLED as usize,
+            PCWSTR::from_raw(enable_radar_label.as_ptr()),
+        );
+
+        let refresh_radar_label = native::wide_str(strings.refresh_codex_radar);
+        let refresh_radar_flags = if codex_radar_refresh_available {
+            MENU_ITEM_FLAGS(0)
+        } else {
+            MF_GRAYED
+        };
+        let _ = AppendMenuW(
+            codex_radar_menu,
+            refresh_radar_flags,
+            IDM_CODEX_RADAR_REFRESH as usize,
+            PCWSTR::from_raw(refresh_radar_label.as_ptr()),
+        );
+
+        let view_radar_label = native::wide_str(strings.view_codex_radar_website);
+        let _ = AppendMenuW(
+            codex_radar_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_CODEX_RADAR_WEBSITE as usize,
+            PCWSTR::from_raw(view_radar_label.as_ptr()),
+        );
+
+        let codex_radar_label = native::wide_str(strings.codex_radar_menu);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            codex_radar_menu.0 as usize,
+            PCWSTR::from_raw(codex_radar_label.as_ptr()),
+        );
+
         let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
         let version_label =
@@ -381,5 +452,28 @@ pub(super) fn show_context_menu(hwnd: HWND) {
         let _ = SetForegroundWindow(hwnd);
         let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
         let _ = DestroyMenu(menu);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radar_manual_refresh_obeys_enabled_busy_and_cooldown_states() {
+        assert!(!radar_manual_refresh_available(false, false, None, 100));
+        assert!(!radar_manual_refresh_available(true, true, None, 100));
+        assert!(!radar_manual_refresh_available(
+            true,
+            false,
+            Some(100),
+            100 + radar::MANUAL_REFRESH_COOLDOWN_SECS - 1
+        ));
+        assert!(radar_manual_refresh_available(
+            true,
+            false,
+            Some(100),
+            100 + radar::MANUAL_REFRESH_COOLDOWN_SECS
+        ));
     }
 }

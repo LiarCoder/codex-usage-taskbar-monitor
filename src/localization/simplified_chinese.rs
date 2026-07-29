@@ -47,6 +47,12 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body:
         "请在终端中运行 'codex'，并按登录提示操作。完成后，请刷新或重新启动此应用程序。",
     second_suffix: "秒",
+    codex_radar_menu: "CodexRadar",
+    enable_codex_radar: "启用 CodexRadar",
+    refresh_codex_radar: "立即刷新推荐数据",
+    view_codex_radar_website: "查看网站",
+    codex_radar_consent_title: "启用 CodexRadar？",
+    codex_radar_consent_body: "启用后，本应用将定期访问 CodexRadar，以获取社区推荐数据。\r\n\r\n请求不会发送 Codex Token、用量数据或项目内容。与普通网站请求一样，CodexRadar 仍可看到 IP 地址、User-Agent 等常规网络信息。\r\n\r\n是否启用 CodexRadar？",
     radar_recommendation: "雷达推荐",
     radar_iq_per_dollar: "IQ/$",
     radar_intelligence_weighted: "偏智力",

@@ -1,6 +1,8 @@
 use super::*;
 use crate::radar as radar_data;
 
+pub(super) const CODEX_RADAR_CONSENT_VERSION: u32 = 1;
+
 pub(super) fn initialize_radar(hwnd: HWND) {
     let (enabled, delay) = {
         let state = lock_state();
@@ -21,6 +23,41 @@ pub(super) fn initialize_radar(hwnd: HWND) {
     } else {
         set_radar_timer(hwnd, delay);
     }
+}
+
+pub(super) fn start_radar(hwnd: HWND) {
+    {
+        let mut state = lock_state();
+        let Some(app_state) = state.as_mut() else {
+            return;
+        };
+        app_state.radar.status = if app_state.radar.cache.has_any_data() {
+            RadarStatus::Ready
+        } else {
+            RadarStatus::Loading
+        };
+    }
+    sync_radar_tooltip(hwnd);
+    if !begin_radar_refresh(hwnd, true) {
+        initialize_radar(hwnd);
+    }
+}
+
+pub(super) fn stop_radar(hwnd: HWND) {
+    {
+        let mut state = lock_state();
+        let Some(app_state) = state.as_mut() else {
+            return;
+        };
+        app_state.radar.status = RadarStatus::Disabled;
+        app_state.radar.in_flight = false;
+        app_state.radar.request_generation = app_state.radar.request_generation.wrapping_add(1);
+    }
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_RADAR);
+    }
+    pop_radar_tooltip();
+    refresh_radar_tooltip_text(hwnd);
 }
 
 pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {

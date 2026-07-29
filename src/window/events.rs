@@ -465,6 +465,15 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
             render_layered();
             sync_tray_icons(hwnd);
         }
+        IDM_CODEX_RADAR_ENABLED => {
+            toggle_codex_radar(hwnd);
+        }
+        IDM_CODEX_RADAR_REFRESH => {
+            let _ = begin_radar_refresh(hwnd, true);
+        }
+        IDM_CODEX_RADAR_WEBSITE => {
+            open_codex_radar_website(hwnd);
+        }
         IDM_LANG_SYSTEM
         | IDM_LANG_ENGLISH
         | IDM_LANG_DUTCH
@@ -500,6 +509,7 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
             }
             save_state_settings();
             render_layered();
+            sync_radar_tooltip(hwnd);
         }
         id if id == tray::IDM_TOGGLE_WIDGET => {
             toggle_widget_visibility(hwnd);
@@ -507,6 +517,76 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
         _ => {}
     }
     LRESULT(0)
+}
+
+unsafe fn toggle_codex_radar(hwnd: HWND) {
+    let (enabled, consent_version, strings) = {
+        let state = lock_state();
+        let Some(app_state) = state.as_ref() else {
+            return;
+        };
+        (
+            app_state.codex_radar_enabled,
+            app_state.codex_radar_consent_version,
+            app_state.language.strings(),
+        )
+    };
+
+    if enabled {
+        {
+            let mut state = lock_state();
+            if let Some(app_state) = state.as_mut() {
+                app_state.codex_radar_enabled = false;
+            }
+        }
+        save_state_settings();
+        stop_radar(hwnd);
+        return;
+    }
+
+    if consent_version < CODEX_RADAR_CONSENT_VERSION {
+        let title = native::wide_str(strings.codex_radar_consent_title);
+        let body = native::wide_str(strings.codex_radar_consent_body);
+        let accepted = MessageBoxW(
+            hwnd,
+            PCWSTR::from_raw(body.as_ptr()),
+            PCWSTR::from_raw(title.as_ptr()),
+            MB_YESNO | MB_ICONINFORMATION,
+        ) == IDYES;
+        if !accepted {
+            return;
+        }
+    }
+
+    {
+        let mut state = lock_state();
+        let Some(app_state) = state.as_mut() else {
+            return;
+        };
+        app_state.codex_radar_enabled = true;
+        app_state.codex_radar_consent_version = CODEX_RADAR_CONSENT_VERSION;
+    }
+    save_state_settings();
+    start_radar(hwnd);
+}
+
+unsafe fn open_codex_radar_website(hwnd: HWND) {
+    let operation = native::wide_str("open");
+    let website = native::wide_str("https://codexradar.com/");
+    let result = ShellExecuteW(
+        hwnd,
+        PCWSTR::from_raw(operation.as_ptr()),
+        PCWSTR::from_raw(website.as_ptr()),
+        PCWSTR::null(),
+        PCWSTR::null(),
+        SW_SHOWNORMAL,
+    );
+    if result.0 as usize <= 32 {
+        diagnose::log(format!(
+            "unable to open CodexRadar website: ShellExecuteW returned {}",
+            result.0 as usize
+        ));
+    }
 }
 
 unsafe fn handle_tray_message(hwnd: HWND, lparam: LPARAM) -> LRESULT {
