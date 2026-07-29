@@ -4,6 +4,7 @@ mod core;
 mod localization;
 mod platform;
 mod poller;
+mod radar;
 mod tray;
 mod updater;
 mod window;
