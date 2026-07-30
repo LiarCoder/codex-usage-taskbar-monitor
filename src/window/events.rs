@@ -52,7 +52,7 @@ pub(super) unsafe fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             pop_radar_tooltip();
             LRESULT(0)
         }
-        WM_LBUTTONUP => handle_left_button_up(hwnd),
+        WM_LBUTTONUP => handle_left_button_up(hwnd, lparam),
         WM_RBUTTONUP => handle_right_button_up(hwnd),
         WM_COMMAND => handle_command(hwnd, wparam),
         _ if msg == WM_APP_TRAY => handle_tray_message(hwnd, lparam),
@@ -170,6 +170,10 @@ unsafe fn handle_left_button_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
     let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
     if !is_drag_handle_point(client_x, client_y) {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.widget_click_pending = true;
+        }
         return LRESULT(0);
     }
 
@@ -178,6 +182,8 @@ unsafe fn handle_left_button_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     let _ = GetCursorPos(&mut pt);
     let mut state = lock_state();
     if let Some(s) = state.as_mut() {
+        s.widget_click_pending = false;
+        s.widget_click_sequence.reset();
         s.dragging = true;
         s.drag_start_mouse_x = pt.x;
         s.drag_start_client_x = client_x;
@@ -282,20 +288,31 @@ unsafe fn handle_mouse_move(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     LRESULT(0)
 }
 
-unsafe fn handle_left_button_up(hwnd: HWND) -> LRESULT {
+unsafe fn handle_left_button_up(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+    let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
+    let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    let drag_result = {
+    let (drag_result, is_widget_click) = {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
+            let is_widget_click =
+                s.widget_click_pending && !is_drag_handle_point(client_x, client_y) && !s.dragging;
+            s.widget_click_pending = false;
             if s.dragging {
                 s.dragging = false;
-                Some((s.taskbar_index, s.drag_start_client_x))
+                (
+                    Some((s.taskbar_index, s.drag_start_client_x)),
+                    is_widget_click,
+                )
             } else {
-                None
+                if !is_widget_click {
+                    s.widget_click_sequence.reset();
+                }
+                (None, is_widget_click)
             }
         } else {
-            None
+            (None, false)
         }
     };
     if let Some((current_taskbar_index, drag_start_client_x)) = drag_result {
@@ -321,14 +338,41 @@ unsafe fn handle_left_button_up(hwnd: HWND) -> LRESULT {
             }
         }
         save_state_settings();
+    } else if is_widget_click && register_widget_click(client_x, client_y) {
+        pop_radar_tooltip();
+        open_codex_radar_website(hwnd);
     }
     LRESULT(0)
 }
 
 unsafe fn handle_right_button_up(hwnd: HWND) -> LRESULT {
+    {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.widget_click_pending = false;
+            s.widget_click_sequence.reset();
+        }
+    }
     pop_radar_tooltip();
     show_context_menu(hwnd);
     LRESULT(0)
+}
+
+unsafe fn register_widget_click(client_x: i32, client_y: i32) -> bool {
+    let max_elapsed = Duration::from_millis(GetDoubleClickTime() as u64);
+    let max_x_delta = (GetSystemMetrics(SM_CXDOUBLECLK).max(0) / 2) as u32;
+    let max_y_delta = (GetSystemMetrics(SM_CYDOUBLECLK).max(0) / 2) as u32;
+    let mut state = lock_state();
+    state.as_mut().is_some_and(|s| {
+        s.widget_click_sequence.record(
+            Instant::now(),
+            client_x,
+            client_y,
+            max_elapsed,
+            max_x_delta,
+            max_y_delta,
+        )
+    })
 }
 
 unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
