@@ -8,9 +8,10 @@ use super::{
 
 const CACHE_SCHEMA: u32 = 1;
 pub(crate) const CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
-pub(crate) const FULL_REFRESH_INTERVAL_SECS: u64 = 6 * 60 * 60;
+pub(crate) const FULL_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
 pub(crate) const MANUAL_REFRESH_COOLDOWN_SECS: u64 = 60;
-const RETRY_DELAYS_SECS: [u64; 4] = [15 * 60, 30 * 60, 60 * 60, FULL_REFRESH_INTERVAL_SECS];
+const MAX_RETRY_DELAY_SECS: u64 = 6 * 60 * 60;
+const RETRY_DELAYS_SECS: [u64; 4] = [15 * 60, 30 * 60, 60 * 60, MAX_RETRY_DELAY_SECS];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct CachedSource<T> {
@@ -309,17 +310,14 @@ mod tests {
             last_refresh_complete: true,
             ..RadarCache::default()
         };
-        assert_eq!(
-            next_due_in_secs(&success, 200),
-            FULL_REFRESH_INTERVAL_SECS - 100
-        );
+        assert_eq!(next_due_in_secs(&success, 200), 60 * 60 - 100);
 
         for (retry_count, expected) in [
             (1, 15 * 60),
             (2, 30 * 60),
             (3, 60 * 60),
-            (4, FULL_REFRESH_INTERVAL_SECS),
-            (8, FULL_REFRESH_INTERVAL_SECS),
+            (4, 6 * 60 * 60),
+            (8, 6 * 60 * 60),
         ] {
             let failed = RadarCache {
                 last_attempt_unix: Some(100),
