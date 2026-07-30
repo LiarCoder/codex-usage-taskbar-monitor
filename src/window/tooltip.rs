@@ -590,6 +590,8 @@ mod tests {
             drag_start_mouse_x: 0,
             drag_start_client_x: 0,
             drag_start_offset: 0,
+            widget_click_pending: false,
+            widget_click_sequence: WidgetClickSequence::default(),
             widget_visible: true,
             compact_mode: false,
             show_5hour_window: true,

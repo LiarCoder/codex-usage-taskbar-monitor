@@ -1,7 +1,7 @@
 //! Shared in-process state for the taskbar widget.
 
 use std::sync::{Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
@@ -66,6 +66,8 @@ pub(super) struct AppState {
     pub(super) drag_start_mouse_x: i32,
     pub(super) drag_start_client_x: i32,
     pub(super) drag_start_offset: i32,
+    pub(super) widget_click_pending: bool,
+    pub(super) widget_click_sequence: WidgetClickSequence,
 
     pub(super) widget_visible: bool,
     pub(super) compact_mode: bool,
@@ -80,6 +82,52 @@ pub(super) struct AppState {
 }
 
 unsafe impl Send for AppState {}
+
+#[derive(Default)]
+pub(super) struct WidgetClickSequence {
+    count: u8,
+    started_at: Option<Instant>,
+    anchor_x: i32,
+    anchor_y: i32,
+}
+
+impl WidgetClickSequence {
+    pub(super) fn record(
+        &mut self,
+        now: Instant,
+        x: i32,
+        y: i32,
+        max_elapsed: Duration,
+        max_x_delta: u32,
+        max_y_delta: u32,
+    ) -> bool {
+        let continues_sequence = self.started_at.is_some_and(|started_at| {
+            now.saturating_duration_since(started_at) <= max_elapsed
+                && x.abs_diff(self.anchor_x) <= max_x_delta
+                && y.abs_diff(self.anchor_y) <= max_y_delta
+        });
+        if !continues_sequence {
+            self.count = 1;
+            self.started_at = Some(now);
+            self.anchor_x = x;
+            self.anchor_y = y;
+            return false;
+        }
+
+        self.count += 1;
+        if self.count < 3 {
+            return false;
+        }
+
+        self.reset();
+        true
+    }
+
+    pub(super) fn reset(&mut self) {
+        self.count = 0;
+        self.started_at = None;
+    }
+}
 
 impl AppState {
     pub(super) fn display_percentage(&self, used_percentage: f64, available: bool) -> f64 {
@@ -136,4 +184,83 @@ pub(super) fn now_unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn widget_click_sequence_triggers_on_third_nearby_click_and_resets() {
+        let mut sequence = WidgetClickSequence::default();
+        let started_at = Instant::now();
+        let max_elapsed = Duration::from_millis(500);
+
+        assert!(!sequence.record(started_at, 100, 100, max_elapsed, 2, 2));
+        assert!(!sequence.record(
+            started_at + Duration::from_millis(150),
+            102,
+            98,
+            max_elapsed,
+            2,
+            2,
+        ));
+        assert!(sequence.record(
+            started_at + Duration::from_millis(300),
+            99,
+            101,
+            max_elapsed,
+            2,
+            2,
+        ));
+        assert!(!sequence.record(
+            started_at + Duration::from_millis(350),
+            100,
+            100,
+            max_elapsed,
+            2,
+            2,
+        ));
+    }
+
+    #[test]
+    fn widget_click_sequence_restarts_after_timeout_or_distant_click() {
+        let mut sequence = WidgetClickSequence::default();
+        let started_at = Instant::now();
+        let max_elapsed = Duration::from_millis(500);
+
+        assert!(!sequence.record(started_at, 100, 100, max_elapsed, 2, 2));
+        assert!(!sequence.record(
+            started_at + Duration::from_millis(600),
+            100,
+            100,
+            max_elapsed,
+            2,
+            2,
+        ));
+        assert!(!sequence.record(
+            started_at + Duration::from_millis(700),
+            103,
+            100,
+            max_elapsed,
+            2,
+            2,
+        ));
+        assert!(!sequence.record(
+            started_at + Duration::from_millis(800),
+            103,
+            100,
+            max_elapsed,
+            2,
+            2,
+        ));
+        assert!(sequence.record(
+            started_at + Duration::from_millis(900),
+            103,
+            100,
+            max_elapsed,
+            2,
+            2,
+        ));
+    }
 }
