@@ -140,6 +140,7 @@ unsafe fn handle_usage_updated(hwnd: HWND) -> LRESULT {
         TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS,
     ));
     sync_tray_icons(hwnd);
+    sync_radar_tooltip(hwnd);
     LRESULT(0)
 }
 

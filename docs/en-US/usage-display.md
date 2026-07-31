@@ -20,6 +20,8 @@ Choose the windows to show under **Settings > Usage windows**. At least one opti
 
 Both modes include the time until reset and apply consistently to the taskbar Widget, tray-icon badge, and tray tooltip.
 
+Reset countdowns use the same compact ASCII notation in every language. They show up to two non-zero units, such as `4d17h`, `17h25m`, `25m49s`, or `49s`. Hover over the Widget or tray icon to see the exact reset time in the Windows local time zone, formatted as `YYYY-MM-DD HH:MM`.
+
 ![Used mode](../images/percentage-bar-in-used-display.png)
 
 ![Remaining mode](../images/percentage-bar-in-remaining-display.png)

@@ -1,5 +1,7 @@
 //! Widget preferences and tray-icon state synchronization.
 
+use std::time::SystemTime;
+
 use super::*;
 
 pub(super) fn save_state_settings() {
@@ -31,10 +33,20 @@ fn tray_icon_data_from_state() -> Option<tray::TrayIconData> {
             let strings = s.language.strings();
             let mut tooltip_windows = Vec::new();
             if s.show_5hour_window && s.session_available {
-                tooltip_windows.push(format!("5h: {}", s.session_text));
+                let resets_at = s
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.session.as_ref())
+                    .and_then(|section| section.resets_at);
+                tooltip_windows.push(format_usage_tooltip_line("5h", &s.session_text, resets_at));
             }
             if s.show_7day_window && s.weekly_available {
-                tooltip_windows.push(format!("7d: {}", s.weekly_text));
+                let resets_at = s
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.weekly.as_ref())
+                    .and_then(|section| section.resets_at);
+                tooltip_windows.push(format_usage_tooltip_line("7d", &s.weekly_text, resets_at));
             }
 
             let (used_percent, display_percent) = match preferred_tray_window(
@@ -71,6 +83,17 @@ fn tray_icon_data_from_state() -> Option<tray::TrayIconData> {
             tooltip: s.language.strings().window_title.to_string(),
         }),
         None => None,
+    }
+}
+
+fn format_usage_tooltip_line(
+    window: &str,
+    usage_text: &str,
+    resets_at: Option<SystemTime>,
+) -> String {
+    match resets_at.and_then(native::format_local_date_time) {
+        Some(reset_time) => format!("{window}: {usage_text} → {reset_time}"),
+        None => format!("{window}: {usage_text}"),
     }
 }
 

@@ -20,6 +20,8 @@ Codex 用量监控把 Codex 返回的限额百分比和重置倒计时显示在 
 
 两种模式都会显示距离限额重置的时间，并同步影响任务栏小工具、托盘图标徽标和托盘提示文字。
 
+所有语言统一使用紧凑的 ASCII 倒计时格式，最多显示两个非零单位，例如 `4d17h`、`17h25m`、`25m49s` 或 `49s`。将鼠标停在小工具或托盘图标上，可以查看按 Windows 本地时区显示的精确重置时间，格式为 `YYYY-MM-DD HH:MM`。
+
 ![已使用模式](../images/percentage-bar-in-used-display.png)
 
 ![剩余模式](../images/percentage-bar-in-remaining-display.png)
