@@ -23,5 +23,9 @@ Desktop.ini
 # Local release workflow helper
 workflow.cmd
 
+# Local development workflow helper
+/debug-local.ps1
+/debug-local.sh
+
 # Local WinGet manifest generation output
 /manifests/
