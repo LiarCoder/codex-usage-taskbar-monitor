@@ -40,13 +40,11 @@ pub(super) const STRINGS: Strings = Strings {
     session_window: "5h",
     weekly_window: "7d",
     now: "現在",
-    day_suffix: "天",
     hour_suffix: "時",
     minute_suffix: "分",
     codex_token_expired_title: "Codex 驗證錯誤",
     codex_token_expired_body:
         "請在終端機中執行 'codex'，並依照登入提示操作。完成後，請重新整理或重新啟動此應用程式。",
-    second_suffix: "秒",
     codex_radar_menu: "CodexRadar",
     enable_codex_radar: "啟用 CodexRadar",
     refresh_codex_radar: "立即重新整理推薦資料",

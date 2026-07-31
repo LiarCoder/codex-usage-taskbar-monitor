@@ -590,3 +590,52 @@ pub(super) fn paint(hdc: HDC, hwnd: HWND) {
         let _ = DeleteDC(mem_dc);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reserved_width_fits_the_longest_compact_countdowns() {
+        unsafe {
+            let screen_dc = GetDC(HWND::default());
+            let hdc = CreateCompatibleDC(screen_dc);
+            let font_name = native::wide_str("Segoe UI");
+            let font = CreateFontW(
+                -12,
+                0,
+                0,
+                0,
+                FW_MEDIUM.0 as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET.0 as u32,
+                OUT_TT_PRECIS.0 as u32,
+                CLIP_DEFAULT_PRECIS.0 as u32,
+                CLEARTYPE_QUALITY.0 as u32,
+                (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+                PCWSTR::from_raw(font_name.as_ptr()),
+            );
+            let old_font = SelectObject(hdc, font);
+
+            let widest = ["100% · 6d23h", "100% · 23h59m", "100% · 59m59s"]
+                .into_iter()
+                .map(|text| {
+                    let text: Vec<u16> = text.encode_utf16().collect();
+                    let mut size = SIZE::default();
+                    assert!(GetTextExtentPoint32W(hdc, &text, &mut size).as_bool());
+                    size.cx
+                })
+                .max()
+                .unwrap();
+
+            SelectObject(hdc, old_font);
+            let _ = DeleteObject(font);
+            let _ = DeleteDC(hdc);
+            ReleaseDC(HWND::default(), screen_dc);
+
+            assert!(widest <= TEXT_WIDTH, "text needs {widest}px");
+        }
+    }
+}

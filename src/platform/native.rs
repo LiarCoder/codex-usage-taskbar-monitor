@@ -1,5 +1,8 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{BOOL, FILETIME, HWND, LPARAM, RECT, SYSTEMTIME};
+use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -184,6 +187,36 @@ pub fn wide_str(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+pub fn format_local_date_time(time: SystemTime) -> Option<String> {
+    const WINDOWS_EPOCH_OFFSET_SECS: u64 = 11_644_473_600;
+    const FILETIME_TICKS_PER_SEC: u64 = 10_000_000;
+
+    let duration = time.duration_since(UNIX_EPOCH).ok()?;
+    let ticks = duration
+        .as_secs()
+        .checked_add(WINDOWS_EPOCH_OFFSET_SECS)?
+        .checked_mul(FILETIME_TICKS_PER_SEC)?
+        .checked_add(u64::from(duration.subsec_nanos()) / 100)?;
+    let file_time = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    let mut utc = SYSTEMTIME::default();
+    let mut local = SYSTEMTIME::default();
+    unsafe {
+        FileTimeToSystemTime(&file_time, &mut utc).ok()?;
+        SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).ok()?;
+    }
+    Some(format_system_time(local))
+}
+
+fn format_system_time(time: SYSTEMTIME) -> String {
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute
+    )
+}
+
 /// COLORREF wrapper (RGB packed into u32)
 pub fn colorref(r: u8, g: u8, b: u8) -> u32 {
     r as u32 | (g as u32) << 8 | (b as u32) << 16
@@ -208,5 +241,24 @@ impl Color {
 
     pub fn to_colorref(self) -> u32 {
         colorref(self.r, self.g, self.b)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_system_time_as_compact_iso_local_time() {
+        let time = SYSTEMTIME {
+            wYear: 2026,
+            wMonth: 8,
+            wDay: 5,
+            wHour: 16,
+            wMinute: 16,
+            ..Default::default()
+        };
+
+        assert_eq!(format_system_time(time), "2026-08-05 16:16");
     }
 }
