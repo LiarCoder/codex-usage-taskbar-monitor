@@ -37,15 +37,22 @@ pub(super) unsafe fn dispatch(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPAR
             refresh_dpi();
             position_at_taskbar();
             render_layered();
+            sync_radar_tooltip(hwnd);
             LRESULT(0)
         }
         WM_TIMER => handle_timer(hwnd, wparam),
         WM_APP_USAGE_UPDATED => handle_usage_updated(hwnd),
+        WM_APP_RADAR_UPDATED => handle_radar_updated(hwnd),
         WM_APP_UPDATE_CHECK_COMPLETE => handle_update_check_complete(hwnd),
+        WM_NCHITTEST => LRESULT(HTCLIENT as isize),
         WM_SETCURSOR => handle_set_cursor(hwnd, msg, wparam, lparam),
         WM_LBUTTONDOWN => handle_left_button_down(hwnd, lparam),
-        WM_MOUSEMOVE => handle_mouse_move(),
-        WM_LBUTTONUP => handle_left_button_up(hwnd),
+        WM_MOUSEMOVE => handle_mouse_move(hwnd, lparam),
+        WM_MOUSELEAVE => {
+            pop_radar_tooltip();
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => handle_left_button_up(hwnd, lparam),
         WM_RBUTTONUP => handle_right_button_up(hwnd),
         WM_COMMAND => handle_command(hwnd, wparam),
         _ if msg == WM_APP_TRAY => handle_tray_message(hwnd, lparam),
@@ -113,6 +120,12 @@ unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
         TIMER_UPDATE_CHECK => {
             begin_update_check(hwnd, false);
         }
+        TIMER_RADAR => {
+            let _ = begin_radar_refresh(hwnd, false);
+        }
+        TIMER_RADAR_TOOLTIP => {
+            show_radar_tooltip(hwnd);
+        }
         _ => {}
     }
     LRESULT(0)
@@ -157,13 +170,20 @@ unsafe fn handle_left_button_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
     let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
     if !is_drag_handle_point(client_x, client_y) {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.widget_click_pending = true;
+        }
         return LRESULT(0);
     }
 
+    pop_radar_tooltip();
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
     let mut state = lock_state();
     if let Some(s) = state.as_mut() {
+        s.widget_click_pending = false;
+        s.widget_click_sequence.reset();
         s.dragging = true;
         s.drag_start_mouse_x = pt.x;
         s.drag_start_client_x = client_x;
@@ -173,11 +193,17 @@ unsafe fn handle_left_button_down(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     LRESULT(0)
 }
 
-unsafe fn handle_mouse_move() -> LRESULT {
+unsafe fn handle_mouse_move(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     let is_dragging = {
         let state = lock_state();
         state.as_ref().map(|s| s.dragging).unwrap_or(false)
     };
+    if !is_dragging {
+        refresh_radar_tooltip_text(hwnd);
+    }
+    let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
+    let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+    update_radar_tooltip_hover(hwnd, client_x, client_y);
     if is_dragging {
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
@@ -262,20 +288,31 @@ unsafe fn handle_mouse_move() -> LRESULT {
     LRESULT(0)
 }
 
-unsafe fn handle_left_button_up(hwnd: HWND) -> LRESULT {
+unsafe fn handle_left_button_up(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+    let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
+    let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
     let mut pt = POINT::default();
     let _ = GetCursorPos(&mut pt);
-    let drag_result = {
+    let (drag_result, is_widget_click) = {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
+            let is_widget_click =
+                s.widget_click_pending && !is_drag_handle_point(client_x, client_y) && !s.dragging;
+            s.widget_click_pending = false;
             if s.dragging {
                 s.dragging = false;
-                Some((s.taskbar_index, s.drag_start_client_x))
+                (
+                    Some((s.taskbar_index, s.drag_start_client_x)),
+                    is_widget_click,
+                )
             } else {
-                None
+                if !is_widget_click {
+                    s.widget_click_sequence.reset();
+                }
+                (None, is_widget_click)
             }
         } else {
-            None
+            (None, false)
         }
     };
     if let Some((current_taskbar_index, drag_start_client_x)) = drag_result {
@@ -301,13 +338,41 @@ unsafe fn handle_left_button_up(hwnd: HWND) -> LRESULT {
             }
         }
         save_state_settings();
+    } else if is_widget_click && register_widget_click(client_x, client_y) {
+        pop_radar_tooltip();
+        open_codex_radar_website(hwnd);
     }
     LRESULT(0)
 }
 
 unsafe fn handle_right_button_up(hwnd: HWND) -> LRESULT {
+    {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.widget_click_pending = false;
+            s.widget_click_sequence.reset();
+        }
+    }
+    pop_radar_tooltip();
     show_context_menu(hwnd);
     LRESULT(0)
+}
+
+unsafe fn register_widget_click(client_x: i32, client_y: i32) -> bool {
+    let max_elapsed = Duration::from_millis(GetDoubleClickTime() as u64);
+    let max_x_delta = (GetSystemMetrics(SM_CXDOUBLECLK).max(0) / 2) as u32;
+    let max_y_delta = (GetSystemMetrics(SM_CYDOUBLECLK).max(0) / 2) as u32;
+    let mut state = lock_state();
+    state.as_mut().is_some_and(|s| {
+        s.widget_click_sequence.record(
+            Instant::now(),
+            client_x,
+            client_y,
+            max_elapsed,
+            max_x_delta,
+            max_y_delta,
+        )
+    })
 }
 
 unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
@@ -390,6 +455,7 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
             save_state_settings();
             position_at_taskbar();
             render_layered();
+            sync_radar_tooltip(hwnd);
         }
         IDM_SHOW_5HOUR_WINDOW | IDM_SHOW_7DAY_WINDOW => {
             let changed = {
@@ -455,6 +521,15 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
             render_layered();
             sync_tray_icons(hwnd);
         }
+        IDM_CODEX_RADAR_ENABLED => {
+            toggle_codex_radar(hwnd);
+        }
+        IDM_CODEX_RADAR_REFRESH => {
+            let _ = begin_radar_refresh(hwnd, true);
+        }
+        IDM_CODEX_RADAR_WEBSITE => {
+            open_codex_radar_website(hwnd);
+        }
         IDM_LANG_SYSTEM
         | IDM_LANG_ENGLISH
         | IDM_LANG_DUTCH
@@ -490,6 +565,7 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
             }
             save_state_settings();
             render_layered();
+            sync_radar_tooltip(hwnd);
         }
         id if id == tray::IDM_TOGGLE_WIDGET => {
             toggle_widget_visibility(hwnd);
@@ -497,6 +573,76 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
         _ => {}
     }
     LRESULT(0)
+}
+
+unsafe fn toggle_codex_radar(hwnd: HWND) {
+    let (enabled, consent_version, strings) = {
+        let state = lock_state();
+        let Some(app_state) = state.as_ref() else {
+            return;
+        };
+        (
+            app_state.codex_radar_enabled,
+            app_state.codex_radar_consent_version,
+            app_state.language.strings(),
+        )
+    };
+
+    if enabled {
+        {
+            let mut state = lock_state();
+            if let Some(app_state) = state.as_mut() {
+                app_state.codex_radar_enabled = false;
+            }
+        }
+        save_state_settings();
+        stop_radar(hwnd);
+        return;
+    }
+
+    if consent_version < CODEX_RADAR_CONSENT_VERSION {
+        let title = native::wide_str(strings.codex_radar_consent_title);
+        let body = native::wide_str(strings.codex_radar_consent_body);
+        let accepted = MessageBoxW(
+            hwnd,
+            PCWSTR::from_raw(body.as_ptr()),
+            PCWSTR::from_raw(title.as_ptr()),
+            MB_YESNO | MB_ICONINFORMATION,
+        ) == IDYES;
+        if !accepted {
+            return;
+        }
+    }
+
+    {
+        let mut state = lock_state();
+        let Some(app_state) = state.as_mut() else {
+            return;
+        };
+        app_state.codex_radar_enabled = true;
+        app_state.codex_radar_consent_version = CODEX_RADAR_CONSENT_VERSION;
+    }
+    save_state_settings();
+    start_radar(hwnd);
+}
+
+unsafe fn open_codex_radar_website(hwnd: HWND) {
+    let operation = native::wide_str("open");
+    let website = native::wide_str("https://codexradar.com/");
+    let result = ShellExecuteW(
+        hwnd,
+        PCWSTR::from_raw(operation.as_ptr()),
+        PCWSTR::from_raw(website.as_ptr()),
+        PCWSTR::null(),
+        PCWSTR::null(),
+        SW_SHOWNORMAL,
+    );
+    if result.0 as usize <= 32 {
+        diagnose::log(format!(
+            "unable to open CodexRadar website: ShellExecuteW returned {}",
+            result.0 as usize
+        ));
+    }
 }
 
 unsafe fn handle_tray_message(hwnd: HWND, lparam: LPARAM) -> LRESULT {
@@ -520,6 +666,7 @@ unsafe fn handle_destroy(hwnd: HWND) -> LRESULT {
     if let Some(h) = hook {
         native::unhook_win_event(h);
     }
+    destroy_radar_tooltip();
     tray::remove(hwnd);
     PostQuitMessage(0);
     LRESULT(0)

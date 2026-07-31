@@ -191,6 +191,13 @@ pub(super) fn check_theme_change() {
 
 pub(super) fn check_language_change() {
     if update_language_change() {
+        let hwnd = {
+            let state = lock_state();
+            state.as_ref().map(|app_state| app_state.hwnd.to_hwnd())
+        };
+        if let Some(hwnd) = hwnd {
+            sync_radar_tooltip(hwnd);
+        }
         render_layered();
     }
 }
