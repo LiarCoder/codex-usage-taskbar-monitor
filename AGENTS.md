@@ -1,46 +1,40 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Project Layout
 
-This Windows-only Rust application displays Codex usage in a taskbar widget and notification-area icon. `src/main.rs` owns startup and CLI dispatch:
+This is a Windows-only Rust 2021 application. `src/main.rs` handles startup, diagnostics, and updater CLI dispatch.
 
-- `src/window/`: widget lifetime, Win32 message handling, rendering, menus, layout, settings, and polling coordination
-- `src/poller/`: Codex credential discovery, API calls, and display formatting
-- `src/updater/`: GitHub/Winget release checks and installation logic
-- `src/core/`: shared models and diagnostic logging
-- `src/platform/`: Windows-native constants and theme helpers
-- `src/localization/`: one module per supported language; update `mod.rs` when adding a locale
-- `src/icons/`: application icon source files and generated Windows icon assets
+- `src/window/`: widget lifecycle, Win32 events, rendering, settings, polling, and UI coordination
+- `src/tray/` and `src/platform/`: notification icon, native helpers, constants, and themes
+- `src/poller/`: Codex credential discovery, usage API calls, and formatting
+- `src/radar/`: CodexRadar fetching, validation, ranking, and caching
+- `src/updater/`: GitHub release checks plus portable and WinGet updates
+- `src/core/`: shared models and diagnostics
+- `src/localization/` and `src/icons/`: translations and application assets
 
-Build metadata and dependencies live in `Cargo.toml`; `build.rs` embeds Windows resources.
+`build.rs` embeds Windows resources. Release automation lives in `.github/workflows/release.yml` and `.agents/skills/release-app-version/`.
 
-## Build, Test, and Development Commands
+## Common Commands
 
-Run commands from the repository root on Windows:
+Run from the repository root on Windows:
 
 ```powershell
-cargo build                 # Compile the debug executable
-cargo run -- --diagnose     # Run and write diagnostics to %TEMP%
-cargo test                  # Run unit tests
-cargo fmt --check           # Verify Rust formatting
-cargo clippy -- -D warnings # Reject lint warnings
-cargo build --release       # Produce the optimized distributable
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+cargo build
+cargo run -- --diagnose
 ```
 
-Use `cargo fmt` before committing. Test widget, tray, or Win32 message changes on a real Windows taskbar.
+Use `cargo build --release` only when validating a release. Manually test taskbar, tray, menu, DPI, and Explorer-restart behavior when those paths change.
 
-## Coding Style & Naming Conventions
+## Development Conventions
 
-Use Rust 2021 idioms and `rustfmt` defaults (four-space indentation). Follow existing naming: `snake_case` for functions, modules, and files; `PascalCase` for types and enums; `SCREAMING_SNAKE_CASE` for constants. Prefer focused modules and minimal visibility (`pub(crate)`, `pub(super)`). Keep Win32 unsafe code narrow and document non-obvious invariants.
+- Follow `rustfmt`, Rust naming conventions, and the existing module boundaries
+- Keep visibility minimal and Win32 `unsafe` blocks narrow; document non-obvious safety invariants
+- Add unit tests near the implementation in `#[cfg(test)] mod tests`; add regression tests for testable fixes
+- Update `src/localization/mod.rs` and relevant language modules when adding user-facing text
+- Keep commits focused and use the repository's Conventional Commit style; reserve `Bump version to vX.Y.Z` for releases
+- PR titles and descriptions should be in Chinese and include user-visible changes and validation performed
 
-## Testing Guidelines
-
-Place unit tests in a nearby `#[cfg(test)] mod tests` block. Name tests as observable behavior, e.g. `settings_without_usage_display_defaults_to_used`. Cover serialization defaults, formatting, and selection logic with unit tests. There is no configured coverage threshold; add regression tests for bug fixes when the behavior is testable without the Windows UI.
-
-## Commit & Pull Request Guidelines
-
-Match the existing history: use concise imperative subjects, preferably Conventional Commit scopes such as `fix(tray): fall back to weekly usage` or `refactor(window): split rendering`. Use `Bump version to vX.Y.Z` only for version releases. Keep commits focused. Pull requests should explain user-visible changes, testing performed, and linked issues; include screenshots or a short recording for taskbar, tray, menu, or layout changes.
-
-## Security & Configuration
-
-Never commit `%USERPROFILE%\\.codex\\auth.json`, tokens, logs, or local settings. The app reads local credentials and may use proxy environment variables, so redact secrets from diagnostics and issue reports.
+Never commit Codex credentials, tokens, logs, local settings, or generated release artifacts. Preserve CodexRadar's opt-in and privacy behavior. Follow `.agents/skills/release-app-version/SKILL.md` for version releases.
