@@ -8,7 +8,7 @@ use windows::Win32::UI::Controls::{
 };
 
 use super::*;
-use crate::radar::{self as radar_data, CachedSource, Recommendation};
+use crate::radar::{self as radar_data, Recommendation};
 
 const RADAR_TOOLTIP_ID: usize = 1;
 const RADAR_TOOLTIP_DELAY_MS: u32 = 500;
@@ -534,9 +534,15 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
         lines[0].push_str(strings.radar_cached_warning);
     }
 
-    lines.push(format_source_line(
-        strings.radar_recommendation,
-        cache.radar.as_ref(),
+    let radar = cache.radar.as_ref().map(|source| &source.value);
+    lines.push(format_recommendation_line(
+        strings.radar_speed_recommendation,
+        radar.and_then(|recommendations| recommendations.speed.as_ref()),
+        strings.radar_data_unavailable,
+    ));
+    lines.push(format_recommendation_line(
+        strings.radar_smart_recommendation,
+        radar.and_then(|recommendations| recommendations.smart.as_ref()),
         strings.radar_data_unavailable,
     ));
 
@@ -573,14 +579,6 @@ fn format_radar_tooltip_header(template: &str, age: &str) -> String {
     format!("{summary}\r\n{community_note}")
 }
 
-fn format_source_line(
-    label: &str,
-    source: Option<&CachedSource<Recommendation>>,
-    unavailable: &str,
-) -> String {
-    format_recommendation_line(label, source.map(|source| &source.value), unavailable)
-}
-
 fn format_recommendation_line(
     label: &str,
     recommendation: Option<&Recommendation>,
@@ -615,6 +613,7 @@ fn format_radar_age(elapsed_secs: u64, strings: Strings) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::radar::CachedSource;
 
     fn recommendation(model: &str, effort: &str, iq: f64, cost: f64) -> Recommendation {
         Recommendation {
@@ -687,7 +686,10 @@ mod tests {
     fn full_cache() -> crate::radar::RadarCache {
         let mut cache = crate::radar::RadarCache::default();
         cache.radar = Some(CachedSource {
-            value: recommendation("gpt-5.6-sol", "high", 89.73, 4.998),
+            value: crate::radar::RadarRecommendations {
+                speed: Some(recommendation("gpt-5.6-sol", "medium", 91.07, 3.742)),
+                smart: Some(recommendation("gpt-5.5", "xhigh", 100.45, 5.737)),
+            },
             validated_at_unix: 100,
             validator: None,
         });
@@ -739,7 +741,8 @@ mod tests {
         let text = format_radar_tooltip(&app_state, 100 + 12 * 60);
 
         assert!(text.starts_with("CodexRadar · 12分前更新\r\n非个性化社区推荐\r\n"));
-        assert!(text.contains("◆ 雷达推荐\r\n  【Sol high】 · IQ 89.7 · $5.00"));
+        assert!(text.contains("◆ 速度位\r\n  【Sol medium】 · IQ 91.1 · $3.74"));
+        assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
         assert!(text.contains("◆ IQ/$\r\n  【Terra max】 · IQ 93.8 · $4.70"));
         assert!(text.contains("◆ 偏智力\r\n  【Sol xhigh】 · IQ 105.8 · $6.19"));
     }
@@ -758,6 +761,18 @@ mod tests {
         ));
         assert!(text.contains("◆ IQ/$\r\n  Data temporarily unavailable"));
         assert!(text.contains("◆ IQ-first\r\n  Data temporarily unavailable"));
+    }
+
+    #[test]
+    fn formats_missing_radar_slot_as_unavailable() {
+        let mut cache = full_cache();
+        cache.radar.as_mut().unwrap().value.smart = None;
+        let app_state = state(LanguageId::English, RadarStatus::Ready, cache);
+
+        let text = format_radar_tooltip(&app_state, 100 + 60);
+
+        assert!(text.contains("◆ Speed\r\n  【Sol medium】"));
+        assert!(text.contains("◆ Smart\r\n  Data temporarily unavailable"));
     }
 
     #[test]

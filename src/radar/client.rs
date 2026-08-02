@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::{
     parse_efficiency_recommendations, parse_radar_recommendation, ComputedRecommendations,
-    Recommendation,
+    RadarRecommendations,
 };
 
 const RADAR_INSIGHTS_URL: &str = "https://codexradar.com/api/radar-insights";
@@ -38,7 +38,7 @@ impl<T> SourceUpdate<T> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RadarRefreshResult {
-    pub(crate) radar: SourceUpdate<Recommendation>,
+    pub(crate) radar: SourceUpdate<RadarRecommendations>,
     pub(crate) computed: SourceUpdate<ComputedRecommendations>,
 }
 
@@ -80,7 +80,7 @@ fn build_agent() -> Result<&'static ureq::Agent, String> {
 fn fetch_radar_recommendation(
     agent: &ureq::Agent,
     last_modified: Option<&str>,
-) -> SourceUpdate<Recommendation> {
+) -> SourceUpdate<RadarRecommendations> {
     let mut request = base_request(agent, RADAR_INSIGHTS_URL);
     if let Some(last_modified) = last_modified {
         request = request.set("If-Modified-Since", last_modified);

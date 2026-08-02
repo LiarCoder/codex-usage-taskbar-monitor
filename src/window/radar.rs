@@ -134,7 +134,8 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
                 .cache
                 .radar
                 .as_ref()
-                .map(|source| radar_data::model_display_name(&source.value.model))
+                .and_then(|source| source.value.speed.as_ref().or(source.value.smart.as_ref()))
+                .map(|recommendation| radar_data::model_display_name(&recommendation.model))
                 .unwrap_or_else(|| "unavailable".to_string());
             diagnose::log(format!(
                 "CodexRadar refresh finished: complete={complete} radar={radar_model} computed={}",
