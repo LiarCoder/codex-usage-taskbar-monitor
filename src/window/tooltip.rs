@@ -438,16 +438,11 @@ fn has_usage_reset_time(app_state: &AppState) -> bool {
     let Some(data) = app_state.data.as_ref() else {
         return false;
     };
-    (app_state.show_5hour_window
+    app_state.show_5hour_window
         && data
             .session
             .as_ref()
-            .is_some_and(|section| section.resets_at.is_some()))
-        || (app_state.show_7day_window
-            && data
-                .weekly
-                .as_ref()
-                .is_some_and(|section| section.resets_at.is_some()))
+            .is_some_and(|section| section.resets_at.is_some())
 }
 
 fn format_widget_tooltip(app_state: &AppState, now_unix: u64) -> String {
@@ -477,15 +472,6 @@ fn format_usage_reset_lines(app_state: &AppState) -> Vec<String> {
             .session
             .as_ref()
             .and_then(|section| format_usage_reset_line(strings.session_window, section.resets_at))
-        {
-            lines.push(line);
-        }
-    }
-    if app_state.show_7day_window {
-        if let Some(line) = data
-            .weekly
-            .as_ref()
-            .and_then(|section| format_usage_reset_line(strings.weekly_window, section.resets_at))
         {
             lines.push(line);
         }
@@ -706,7 +692,36 @@ mod tests {
     }
 
     #[test]
-    fn shows_local_reset_time_without_requiring_codex_radar() {
+    fn shows_5hour_reset_time_without_requiring_codex_radar() {
+        let mut app_state = state(
+            LanguageId::English,
+            RadarStatus::Disabled,
+            crate::radar::RadarCache::default(),
+        );
+        app_state.codex_radar_enabled = false;
+        app_state.last_poll_ok = true;
+        app_state.data = Some(crate::core::models::UsageData {
+            session: Some(crate::core::models::UsageSection {
+                percentage: 42.0,
+                resets_at: Some(std::time::UNIX_EPOCH + Duration::from_secs(1_785_900_000)),
+            }),
+            weekly: Some(crate::core::models::UsageSection {
+                percentage: 98.0,
+                resets_at: Some(std::time::UNIX_EPOCH + Duration::from_secs(1_785_917_790)),
+            }),
+            ..Default::default()
+        });
+
+        let text = format_widget_tooltip(&app_state, 0);
+
+        assert!(widget_tooltip_available(&app_state));
+        assert!(text.starts_with("5h → "));
+        assert!(!text.contains("7d → "));
+        assert!(!text.contains("CodexRadar"));
+    }
+
+    #[test]
+    fn does_not_show_tooltip_for_weekly_reset_time_alone() {
         let mut app_state = state(
             LanguageId::English,
             RadarStatus::Disabled,
@@ -723,11 +738,8 @@ mod tests {
             ..Default::default()
         });
 
-        let text = format_widget_tooltip(&app_state, 0);
-
-        assert!(widget_tooltip_available(&app_state));
-        assert!(text.starts_with("7d → "));
-        assert!(!text.contains("CodexRadar"));
+        assert!(!widget_tooltip_available(&app_state));
+        assert!(format_widget_tooltip(&app_state, 0).is_empty());
     }
 
     #[test]
