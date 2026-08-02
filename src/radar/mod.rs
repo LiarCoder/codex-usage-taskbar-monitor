@@ -1,13 +1,15 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 mod cache;
 mod client;
 
+#[cfg(test)]
+pub(crate) use cache::CachedSource;
 pub(crate) use cache::{
-    apply_refresh, load_cache, next_due_in_secs, save_cache, CachedSource, RadarCache,
+    apply_refresh, load_cache, next_due_in_secs, save_cache, RadarCache,
     MANUAL_REFRESH_COOLDOWN_SECS,
 };
 pub(crate) use client::{fetch_recommendations, FetchValidators, RadarRefreshResult, SourceUpdate};
@@ -24,6 +26,41 @@ pub(crate) struct Recommendation {
     pub(crate) iq: f64,
     pub(crate) average_cost_usd: f64,
     pub(crate) valid_tasks: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct RadarRecommendations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) speed: Option<Recommendation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) smart: Option<Recommendation>,
+}
+
+impl<'de> Deserialize<'de> for RadarRecommendations {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WireFormat {
+            Legacy(Recommendation),
+            Current {
+                #[serde(default)]
+                speed: Option<Recommendation>,
+                #[serde(default)]
+                smart: Option<Recommendation>,
+            },
+        }
+
+        Ok(match WireFormat::deserialize(deserializer)? {
+            WireFormat::Legacy(recommendation) => Self {
+                speed: Some(recommendation),
+                smart: None,
+            },
+            WireFormat::Current { speed, smart } => Self { speed, smart },
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -91,33 +128,52 @@ struct EfficiencyPoint {
     valid_tasks: u32,
 }
 
-pub(crate) fn parse_radar_recommendation(json: &[u8]) -> Result<Recommendation, RadarDataError> {
+pub(crate) fn parse_radar_recommendation(
+    json: &[u8],
+) -> Result<RadarRecommendations, RadarDataError> {
     let response: RadarInsightsResponse =
         serde_json::from_slice(json).map_err(|_| RadarDataError::InvalidJson)?;
     if response.schema != RADAR_INSIGHTS_SCHEMA {
         return Err(RadarDataError::UnsupportedSchema);
     }
 
-    let item = response
+    let items = response
         .recommendations
         .into_iter()
         .find(|group| group.key == "daily_development")
-        .and_then(|group| {
-            group
-                .items
-                .into_iter()
-                .find(|item| item.slot.as_deref() == Some("value"))
-        })
+        .map(|group| group.items)
         .ok_or(RadarDataError::RecommendationUnavailable)?;
 
-    recommendation_from_parts(
-        item.model,
-        item.effort,
-        item.iq,
-        item.average_cost_usd,
-        item.samples,
-    )
-    .ok_or(RadarDataError::InvalidData)
+    let mut speed = None;
+    let mut smart = None;
+    let mut legacy_value = None;
+    for item in items {
+        let destination = match item.slot.as_deref() {
+            Some("speed") if speed.is_none() => &mut speed,
+            Some("smart") if smart.is_none() => &mut smart,
+            Some("value") if legacy_value.is_none() => &mut legacy_value,
+            _ => continue,
+        };
+        *destination = Some(
+            recommendation_from_parts(
+                item.model,
+                item.effort,
+                item.iq,
+                item.average_cost_usd,
+                item.samples,
+            )
+            .ok_or(RadarDataError::InvalidData)?,
+        );
+    }
+
+    if speed.is_none() {
+        speed = legacy_value;
+    }
+    if speed.is_none() && smart.is_none() {
+        return Err(RadarDataError::RecommendationUnavailable);
+    }
+
+    Ok(RadarRecommendations { speed, smart })
 }
 
 pub(crate) fn parse_efficiency_recommendations(
@@ -264,7 +320,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selects_the_daily_development_value_recommendation() {
+    fn selects_current_daily_development_recommendations() {
         let json = br#"{
             "schema": 1,
             "extra": true,
@@ -284,11 +340,11 @@ mod tests {
                     "items": [
                         {
                             "model": "gpt-5.6-sol",
-                            "effort": "high",
-                            "iq": 89.73,
-                            "average_cost_usd": 4.998,
+                            "effort": "medium",
+                            "iq": 91.07,
+                            "average_cost_usd": 3.742,
                             "samples": 112,
-                            "slot": "value",
+                            "slot": "speed",
                             "ignored": "field"
                         },
                         {
@@ -303,11 +359,58 @@ mod tests {
             ]
         }"#;
 
-        let recommendation = parse_radar_recommendation(json).unwrap();
+        let recommendations = parse_radar_recommendation(json).unwrap();
 
-        assert_eq!(recommendation.model, "gpt-5.6-sol");
-        assert_eq!(recommendation.effort, "high");
-        assert_eq!(recommendation.valid_tasks, 112);
+        let speed = recommendations.speed.unwrap();
+        assert_eq!(speed.model, "gpt-5.6-sol");
+        assert_eq!(speed.effort, "medium");
+        assert_eq!(speed.valid_tasks, 112);
+        assert_eq!(recommendations.smart.unwrap().effort, "xhigh");
+    }
+
+    #[test]
+    fn falls_back_to_legacy_value_for_speed() {
+        let json = br#"{
+            "schema": 1,
+            "recommendations": [{
+                "key": "daily_development",
+                "items": [{
+                    "model": "gpt-5.6-sol",
+                    "effort": "high",
+                    "iq": 89.73,
+                    "average_cost_usd": 4.998,
+                    "samples": 112,
+                    "slot": "value"
+                }]
+            }]
+        }"#;
+
+        let recommendations = parse_radar_recommendation(json).unwrap();
+
+        assert_eq!(recommendations.speed.unwrap().effort, "high");
+        assert!(recommendations.smart.is_none());
+    }
+
+    #[test]
+    fn accepts_a_single_current_radar_slot() {
+        let json = br#"{
+            "schema": 1,
+            "recommendations": [{
+                "key": "daily_development",
+                "items": [{
+                    "model": "gpt-5.5",
+                    "effort": "xhigh",
+                    "iq": 100.45,
+                    "average_cost_usd": 5.737,
+                    "slot": "smart"
+                }]
+            }]
+        }"#;
+
+        let recommendations = parse_radar_recommendation(json).unwrap();
+
+        assert!(recommendations.speed.is_none());
+        assert_eq!(recommendations.smart.unwrap().model, "gpt-5.5");
     }
 
     #[test]
@@ -318,10 +421,10 @@ mod tests {
             Err(RadarDataError::UnsupportedSchema)
         );
 
-        let missing_value =
+        let missing_supported_slot =
             br#"{"schema":1,"recommendations":[{"key":"daily_development","items":[]}]}"#;
         assert_eq!(
-            parse_radar_recommendation(missing_value),
+            parse_radar_recommendation(missing_supported_slot),
             Err(RadarDataError::RecommendationUnavailable)
         );
     }
