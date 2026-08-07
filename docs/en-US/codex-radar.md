@@ -18,7 +18,6 @@ After enabling it, pause over the Widget content for about 500 ms to see recomme
 | --- | --- |
 | Speed / Smart | Shows explicit `speed` / `smart` slots when provided; the legacy `value` recommendation is kept as Speed |
 | Daily development | Shows an untagged `daily_development` list in the supplied order without inferring position semantics |
-| IQ/$ | Among combinations with IQ at least 90 and a positive average price, selects the highest `IQ / average price` |
 | IQ-first | Uses the same candidates and selects by `0.8 × relative IQ score + 0.2 × relative price score`, favoring IQ |
 
 These results come from community data and are not filtered against models available to your account. A recommended combination might therefore be unavailable to you.

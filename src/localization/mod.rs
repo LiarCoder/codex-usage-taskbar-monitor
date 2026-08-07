@@ -200,7 +200,6 @@ pub struct Strings {
     pub radar_speed_recommendation: &'static str,
     pub radar_smart_recommendation: &'static str,
     pub radar_daily_development: &'static str,
-    pub radar_iq_per_dollar: &'static str,
     pub radar_intelligence_weighted: &'static str,
     pub radar_tooltip_header: &'static str,
     pub radar_cached_warning: &'static str,

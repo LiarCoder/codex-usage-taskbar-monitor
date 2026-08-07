@@ -53,7 +53,6 @@ pub(super) const STRINGS: Strings = Strings {
     radar_speed_recommendation: "Tempo",
     radar_smart_recommendation: "Intelligenz",
     radar_daily_development: "Empfehlungen für die tägliche Entwicklung",
-    radar_iq_per_dollar: "IQ/$",
     radar_intelligence_weighted: "IQ-priorisiert",
     radar_tooltip_header:
         "CodexRadar · Vor {age} aktualisiert · Nicht personalisierte Community-Empfehlung",

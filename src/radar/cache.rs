@@ -202,7 +202,6 @@ mod tests {
 
     fn computed() -> ComputedRecommendations {
         ComputedRecommendations {
-            iq_per_dollar: Some(recommendation("value")),
             intelligence_weighted: Some(recommendation("weighted")),
         }
     }

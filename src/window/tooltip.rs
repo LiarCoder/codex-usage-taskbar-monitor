@@ -565,20 +565,11 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
 
     if let Some(computed) = cache.computed.as_ref() {
         lines.push(format_recommendation_line(
-            strings.radar_iq_per_dollar,
-            computed.value.iq_per_dollar.as_ref(),
-            strings.radar_no_eligible,
-        ));
-        lines.push(format_recommendation_line(
             strings.radar_intelligence_weighted,
             computed.value.intelligence_weighted.as_ref(),
             strings.radar_no_eligible,
         ));
     } else {
-        lines.push(format_unavailable_line(
-            strings.radar_iq_per_dollar,
-            strings.radar_data_unavailable,
-        ));
         lines.push(format_unavailable_line(
             strings.radar_intelligence_weighted,
             strings.radar_data_unavailable,
@@ -729,7 +720,6 @@ mod tests {
         });
         cache.computed = Some(CachedSource {
             value: crate::radar::ComputedRecommendations {
-                iq_per_dollar: Some(recommendation("gpt-5.6-terra", "max", 93.75, 4.70)),
                 intelligence_weighted: Some(recommendation("gpt-5.6-sol", "xhigh", 105.8, 6.19)),
             },
             validated_at_unix: 100,
@@ -803,7 +793,6 @@ mod tests {
         assert!(text.starts_with("CodexRadar · 12分前更新\r\n非个性化社区推荐\r\n"));
         assert!(text.contains("◆ 速度位\r\n  【Sol medium】 · IQ 91.1 · $3.74"));
         assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
-        assert!(text.contains("◆ IQ/$\r\n  【Terra max】 · IQ 93.8 · $4.70"));
         assert!(text.contains("◆ 偏智力\r\n  【Sol xhigh】 · IQ 105.8 · $6.19"));
     }
 
@@ -841,7 +830,6 @@ mod tests {
         assert!(text.starts_with(
             "CodexRadar · Updated 1m ago\r\nNon-personalized community recommendation · Cached data · May be outdated\r\n"
         ));
-        assert!(text.contains("◆ IQ/$\r\n  Data temporarily unavailable"));
         assert!(text.contains("◆ IQ-first\r\n  Data temporarily unavailable"));
     }
 
@@ -865,7 +853,7 @@ mod tests {
         let text = format_radar_tooltip(&app_state, 100 + 60);
 
         assert!(text.contains("Cached data · May be outdated"));
-        assert!(text.contains("◆ IQ/$\r\n  【Terra max】"));
+        assert!(text.contains("◆ IQ-first\r\n  【Sol xhigh】"));
     }
 
     #[test]

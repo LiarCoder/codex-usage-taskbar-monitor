@@ -54,7 +54,6 @@ pub(super) const STRINGS: Strings = Strings {
     radar_speed_recommendation: "速度位",
     radar_smart_recommendation: "聪明位",
     radar_daily_development: "日常开发推荐",
-    radar_iq_per_dollar: "IQ/$",
     radar_intelligence_weighted: "偏智力",
     radar_tooltip_header: "CodexRadar · {age}前更新 · 非个性化社区推荐",
     radar_cached_warning: "缓存数据 · 可能已过期",

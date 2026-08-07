@@ -78,7 +78,7 @@ impl<'de> Deserialize<'de> for RadarRecommendations {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ComputedRecommendations {
-    pub(crate) iq_per_dollar: Option<Recommendation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) intelligence_weighted: Option<Recommendation>,
 }
 
@@ -287,7 +287,6 @@ fn sanitize_label(value: &str) -> Option<String> {
 fn rank_candidates(candidates: &[Recommendation]) -> ComputedRecommendations {
     if candidates.is_empty() {
         return ComputedRecommendations {
-            iq_per_dollar: None,
             intelligence_weighted: None,
         };
     }
@@ -302,9 +301,6 @@ fn rank_candidates(candidates: &[Recommendation]) -> ComputedRecommendations {
         .fold(f64::INFINITY, f64::min);
 
     ComputedRecommendations {
-        iq_per_dollar: select_best(candidates, |candidate| {
-            candidate.iq / candidate.average_cost_usd
-        }),
         intelligence_weighted: select_best(candidates, |candidate| {
             let intelligence_score = candidate.iq / maximum_iq;
             let cost_score = minimum_cost / candidate.average_cost_usd;
@@ -487,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn ranks_iq_per_dollar_and_intelligence_weighted_independently() {
+    fn ranks_intelligence_weighted() {
         let json = br#"{
             "schema": 2,
             "points": [
@@ -500,10 +496,6 @@ mod tests {
 
         let recommendations = parse_efficiency_recommendations(json).unwrap();
 
-        assert_eq!(
-            recommendations.iq_per_dollar.unwrap().model,
-            "gpt-5.6-terra"
-        );
         let weighted = recommendations.intelligence_weighted.unwrap();
         assert_eq!(weighted.model, "gpt-5.6-sol");
         assert_eq!(weighted.effort, "xhigh");
@@ -521,7 +513,6 @@ mod tests {
 
         let recommendations = parse_efficiency_recommendations(json).unwrap();
 
-        assert_eq!(recommendations.iq_per_dollar.unwrap().model, "boundary");
         assert_eq!(
             recommendations.intelligence_weighted.unwrap().model,
             "boundary"
@@ -540,7 +531,6 @@ mod tests {
 
         let recommendations = parse_efficiency_recommendations(json).unwrap();
 
-        assert_eq!(recommendations.iq_per_dollar.unwrap().model, "alpha");
         assert_eq!(
             recommendations.intelligence_weighted.unwrap().model,
             "alpha"
@@ -558,7 +548,6 @@ mod tests {
 
         let recommendations = parse_efficiency_recommendations(json).unwrap();
 
-        assert!(recommendations.iq_per_dollar.is_none());
         assert!(recommendations.intelligence_weighted.is_none());
     }
 
