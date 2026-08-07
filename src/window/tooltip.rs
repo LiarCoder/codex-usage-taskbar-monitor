@@ -529,17 +529,20 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
                 strings.radar_speed_recommendation,
                 recommendations.speed.as_ref(),
                 strings.radar_data_unavailable,
+                strings.minute_suffix,
             ));
             lines.push(format_recommendation_line(
                 strings.radar_smart_recommendation,
                 recommendations.smart.as_ref(),
                 strings.radar_data_unavailable,
+                strings.minute_suffix,
             ));
         }
         if !recommendations.daily_development.is_empty() {
             lines.push(format_recommendations_line(
-                strings.radar_daily_development,
+                strings.radar_community_daily,
                 &recommendations.daily_development,
+                strings.minute_suffix,
             ));
         }
         if !has_slot_recommendations && recommendations.daily_development.is_empty() {
@@ -565,22 +568,24 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
 
     if let Some(computed) = cache.computed.as_ref() {
         lines.push(format_recommendation_line(
-            strings.radar_iq_per_dollar,
-            computed.value.iq_per_dollar.as_ref(),
+            strings.radar_daily_recommendation,
+            computed.value.daily.as_ref(),
             strings.radar_no_eligible,
+            strings.minute_suffix,
         ));
         lines.push(format_recommendation_line(
-            strings.radar_intelligence_weighted,
-            computed.value.intelligence_weighted.as_ref(),
+            strings.radar_hard_problem,
+            computed.value.hard_problem.as_ref(),
             strings.radar_no_eligible,
+            strings.minute_suffix,
         ));
     } else {
         lines.push(format_unavailable_line(
-            strings.radar_iq_per_dollar,
+            strings.radar_daily_recommendation,
             strings.radar_data_unavailable,
         ));
         lines.push(format_unavailable_line(
-            strings.radar_intelligence_weighted,
+            strings.radar_hard_problem,
             strings.radar_data_unavailable,
         ));
     }
@@ -600,33 +605,42 @@ fn format_recommendation_line(
     label: &str,
     recommendation: Option<&Recommendation>,
     unavailable: &str,
+    minute_suffix: &str,
 ) -> String {
     let Some(recommendation) = recommendation else {
         return format_unavailable_line(label, unavailable);
     };
     format!(
         "◆ {label}\r\n{}",
-        format_recommendation_value(recommendation)
+        format_recommendation_value(recommendation, minute_suffix)
     )
 }
 
-fn format_recommendations_line(label: &str, recommendations: &[Recommendation]) -> String {
+fn format_recommendations_line(
+    label: &str,
+    recommendations: &[Recommendation],
+    minute_suffix: &str,
+) -> String {
     let values = recommendations
         .iter()
-        .map(format_recommendation_value)
+        .map(|recommendation| format_recommendation_value(recommendation, minute_suffix))
         .collect::<Vec<_>>()
         .join("\r\n");
     format!("◆ {label}\r\n{values}")
 }
 
-fn format_recommendation_value(recommendation: &Recommendation) -> String {
-    format!(
+fn format_recommendation_value(recommendation: &Recommendation, minute_suffix: &str) -> String {
+    let mut value = format!(
         "  【{} {}】 · IQ {:.1} · ${:.2}",
         radar_data::model_display_name(&recommendation.model),
         recommendation.effort,
         recommendation.iq,
         recommendation.average_cost_usd
-    )
+    );
+    if let Some(average_minutes) = recommendation.average_minutes {
+        value.push_str(&format!(" · {average_minutes:.1}{minute_suffix}"));
+    }
+    value
 }
 
 fn format_unavailable_line(label: &str, unavailable: &str) -> String {
@@ -654,8 +668,23 @@ mod tests {
             effort: effort.to_string(),
             iq,
             average_cost_usd: cost,
+            average_minutes: None,
+            passed_tasks: None,
             valid_tasks: 112,
         }
+    }
+
+    fn recommendation_with_metrics(
+        model: &str,
+        effort: &str,
+        iq: f64,
+        cost: f64,
+        minutes: f64,
+    ) -> Recommendation {
+        let mut value = recommendation(model, effort, iq, cost);
+        value.average_minutes = Some(minutes);
+        value.passed_tasks = Some(100);
+        value
     }
 
     fn state(
@@ -729,8 +758,20 @@ mod tests {
         });
         cache.computed = Some(CachedSource {
             value: crate::radar::ComputedRecommendations {
-                iq_per_dollar: Some(recommendation("gpt-5.6-terra", "max", 93.75, 4.70)),
-                intelligence_weighted: Some(recommendation("gpt-5.6-sol", "xhigh", 105.8, 6.19)),
+                daily: Some(recommendation_with_metrics(
+                    "gpt-5.6-terra",
+                    "max",
+                    93.75,
+                    4.70,
+                    20.0,
+                )),
+                hard_problem: Some(recommendation_with_metrics(
+                    "gpt-5.6-sol",
+                    "xhigh",
+                    105.8,
+                    6.19,
+                    30.0,
+                )),
             },
             validated_at_unix: 100,
             validator: None,
@@ -803,12 +844,12 @@ mod tests {
         assert!(text.starts_with("CodexRadar · 12分前更新\r\n非个性化社区推荐\r\n"));
         assert!(text.contains("◆ 速度位\r\n  【Sol medium】 · IQ 91.1 · $3.74"));
         assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
-        assert!(text.contains("◆ IQ/$\r\n  【Terra max】 · IQ 93.8 · $4.70"));
-        assert!(text.contains("◆ 偏智力\r\n  【Sol xhigh】 · IQ 105.8 · $6.19"));
+        assert!(text.contains("◆ 日常推荐\r\n  【Terra max】 · IQ 93.8 · $4.70 · 20.0分"));
+        assert!(text.contains("◆ 难题推荐\r\n  【Sol xhigh】 · IQ 105.8 · $6.19 · 30.0分"));
     }
 
     #[test]
-    fn formats_untagged_radar_recommendations_as_daily_development() {
+    fn formats_untagged_radar_recommendations_as_community_daily() {
         let mut cache = full_cache();
         cache.radar.as_mut().unwrap().value = crate::radar::RadarRecommendations {
             speed: None,
@@ -823,7 +864,7 @@ mod tests {
         let text = format_radar_tooltip(&app_state, 100 + 60);
 
         assert!(text.contains(
-            "◆ Daily development\r\n  【GPT-5.5 high】 · IQ 95.1 · $3.66\r\n  【Luna max】 · IQ 95.1 · $0.47"
+            "◆ Community daily\r\n  【GPT-5.5 high】 · IQ 95.1 · $3.66\r\n  【Luna max】 · IQ 95.1 · $0.47"
         ));
         assert!(!text.contains("◆ Speed"));
         assert!(!text.contains("◆ Smart"));
@@ -841,8 +882,8 @@ mod tests {
         assert!(text.starts_with(
             "CodexRadar · Updated 1m ago\r\nNon-personalized community recommendation · Cached data · May be outdated\r\n"
         ));
-        assert!(text.contains("◆ IQ/$\r\n  Data temporarily unavailable"));
-        assert!(text.contains("◆ IQ-first\r\n  Data temporarily unavailable"));
+        assert!(text.contains("◆ Daily\r\n  Data temporarily unavailable"));
+        assert!(text.contains("◆ Hard problem\r\n  Data temporarily unavailable"));
     }
 
     #[test]
@@ -865,7 +906,8 @@ mod tests {
         let text = format_radar_tooltip(&app_state, 100 + 60);
 
         assert!(text.contains("Cached data · May be outdated"));
-        assert!(text.contains("◆ IQ/$\r\n  【Terra max】"));
+        assert!(text.contains("◆ Daily\r\n  【Terra max】"));
+        assert!(text.contains("◆ Hard problem\r\n  【Sol xhigh】"));
     }
 
     #[test]

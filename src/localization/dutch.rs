@@ -52,9 +52,9 @@ pub(super) const STRINGS: Strings = Strings {
     codex_radar_consent_body: "Wanneer ingeschakeld maakt deze app periodiek verbinding met CodexRadar voor aanbevelingsgegevens van de community.\r\n\r\nUw Codex Token, gebruiksgegevens en projectinhoud worden niet verzonden. Zoals bij elk websiteverzoek kan CodexRadar wel normale netwerkinformatie zien, zoals uw IP-adres en User-Agent.\r\n\r\nCodexRadar inschakelen?",
     radar_speed_recommendation: "Snelheid",
     radar_smart_recommendation: "Intelligentie",
-    radar_daily_development: "Aanbevelingen voor dagelijkse ontwikkeling",
-    radar_iq_per_dollar: "IQ/$",
-    radar_intelligence_weighted: "IQ-eerst",
+    radar_community_daily: "Dagelijkse community",
+    radar_daily_recommendation: "Dagelijks",
+    radar_hard_problem: "Moeilijk probleem",
     radar_tooltip_header:
         "CodexRadar · {age} geleden bijgewerkt · Niet-gepersonaliseerd communityadvies",
     radar_cached_warning: "Cachegegevens · Mogelijk verouderd",
