@@ -56,7 +56,7 @@ pub(super) const STRINGS: Strings = Strings {
     radar_community_daily: "社群日常推薦",
     radar_daily_recommendation: "日常推薦",
     radar_hard_problem: "難題推薦",
-    radar_tooltip_header: "CodexRadar · {age}前更新\r\n下次更新：{next_update}",
+    radar_tooltip_header: "CodexRadar · 連點任務列元件三次可開啟網站\r\n{age}前更新\r\n下次更新：{next_update}",
     radar_cached_warning: "快取資料，可能已過期",
     radar_loading: "正在取得雷達推薦資料...",
     radar_data_unavailable: "資料暫時無法使用",

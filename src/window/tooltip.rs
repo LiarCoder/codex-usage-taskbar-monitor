@@ -610,10 +610,15 @@ fn format_radar_tooltip_header(
     let Some(cached_warning) = cached_warning else {
         return header;
     };
-    let Some((summary, schedule)) = header.split_once("\r\n") else {
-        return format!("{header} · {cached_warning}");
-    };
-    format!("{summary} · {cached_warning}\r\n{schedule}")
+    let mut lines = header.split("\r\n").map(str::to_owned).collect::<Vec<_>>();
+    if let Some(update_line) = lines.get_mut(1) {
+        update_line.push_str(" · ");
+        update_line.push_str(cached_warning);
+    } else if let Some(first_line) = lines.first_mut() {
+        first_line.push_str(" · ");
+        first_line.push_str(cached_warning);
+    }
+    lines.join("\r\n")
 }
 
 fn format_recommendation_line(
@@ -857,7 +862,9 @@ mod tests {
 
         let text = format_radar_tooltip(&app_state, 100 + 12 * 60);
 
-        assert!(text.starts_with("CodexRadar · 12分前更新\r\n下次更新："));
+        assert!(
+            text.starts_with("CodexRadar · 三击任务栏组件可跳转网站\r\n12分前更新\r\n下次更新：")
+        );
         assert!(!text.contains("非个性化社区推荐"));
         assert!(text.contains("◆ 速度位\r\n  【Sol medium】 · IQ 91.1 · $3.74"));
         assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
@@ -866,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_cached_warning_on_the_first_header_line() {
+    fn keeps_cached_warning_on_the_update_age_line() {
         let mut app_state = state(
             LanguageId::SimplifiedChinese,
             RadarStatus::Ready,
@@ -876,7 +883,9 @@ mod tests {
 
         let text = format_radar_tooltip(&app_state, 100 + 12 * 60);
 
-        assert!(text.starts_with("CodexRadar · 12分前更新 · 缓存数据，可能已过期\r\n下次更新："));
+        assert!(text.starts_with(
+            "CodexRadar · 三击任务栏组件可跳转网站\r\n12分前更新 · 缓存数据，可能已过期\r\n下次更新："
+        ));
     }
 
     #[test]
@@ -911,7 +920,7 @@ mod tests {
         let text = format_radar_tooltip(&app_state, 100 + 60);
 
         assert!(text.starts_with(
-            "CodexRadar · Updated 1m ago · Cached data, may be outdated\r\nNext update: "
+            "CodexRadar · Triple-click the taskbar widget to open the website\r\nUpdated 1m ago · Cached data, may be outdated\r\nNext update: "
         ));
         assert!(text.contains("◆ Daily\r\n  Data temporarily unavailable"));
         assert!(text.contains("◆ Hard problem\r\n  Data temporarily unavailable"));

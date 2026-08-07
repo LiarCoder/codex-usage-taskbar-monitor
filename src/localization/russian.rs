@@ -56,7 +56,7 @@ pub(super) const STRINGS: Strings = Strings {
     radar_daily_recommendation: "Повседневная рекомендация",
     radar_hard_problem: "Сложная задача",
     radar_tooltip_header:
-        "CodexRadar · Обновлено {age} назад\r\nСледующее обновление: {next_update}",
+        "CodexRadar · Трижды щёлкните виджет на панели задач, чтобы открыть сайт\r\nОбновлено {age} назад\r\nСледующее обновление: {next_update}",
     radar_cached_warning: "Данные из кэша, могли устареть",
     radar_loading: "Получение рекомендаций CodexRadar...",
     radar_data_unavailable: "Данные временно недоступны",

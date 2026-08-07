@@ -56,7 +56,7 @@ pub(super) const STRINGS: Strings = Strings {
     radar_daily_recommendation: "Daily",
     radar_hard_problem: "Hard problem",
     radar_tooltip_header:
-        "CodexRadar · Updated {age} ago\r\nNext update: {next_update}",
+        "CodexRadar · Triple-click the taskbar widget to open the website\r\nUpdated {age} ago\r\nNext update: {next_update}",
     radar_cached_warning: "Cached data, may be outdated",
     radar_loading: "Fetching CodexRadar recommendations...",
     radar_data_unavailable: "Data temporarily unavailable",
