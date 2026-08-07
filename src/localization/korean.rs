@@ -55,7 +55,7 @@ pub(super) const STRINGS: Strings = Strings {
     radar_community_daily: "커뮤니티 일상 추천",
     radar_daily_recommendation: "일상 추천",
     radar_hard_problem: "어려운 문제",
-    radar_tooltip_header: "CodexRadar · {age} 전에 업데이트\r\n다음 업데이트: {next_update}",
+    radar_tooltip_header: "CodexRadar · 작업 표시줄 위젯을 세 번 클릭하여 웹사이트 열기\r\n{age} 전에 업데이트\r\n다음 업데이트: {next_update}",
     radar_cached_warning: "캐시된 데이터, 오래되었을 수 있음",
     radar_loading: "CodexRadar 추천 데이터를 가져오는 중...",
     radar_data_unavailable: "데이터를 일시적으로 사용할 수 없음",
