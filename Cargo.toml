@@ -1,6 +1,6 @@
 [package]
 name = "codex-usage-taskbar-monitor"
-version = "1.8.1"
+version = "1.8.2"
 edition = "2021"
 license = "MIT"
 description = "Codex Usage Monitor"
