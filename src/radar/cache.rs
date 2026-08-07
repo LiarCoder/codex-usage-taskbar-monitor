@@ -205,7 +205,7 @@ mod tests {
     fn computed() -> ComputedRecommendations {
         ComputedRecommendations {
             daily: Some(recommendation("daily")),
-            intelligence_weighted: Some(recommendation("weighted")),
+            hard_problem: Some(recommendation("weighted")),
         }
     }
 
@@ -360,10 +360,7 @@ mod tests {
         let computed = cache.computed.unwrap().value;
 
         assert!(computed.daily.is_none());
-        assert_eq!(
-            computed.intelligence_weighted.unwrap().average_minutes,
-            None
-        );
+        assert!(computed.hard_problem.is_none());
     }
 
     #[test]

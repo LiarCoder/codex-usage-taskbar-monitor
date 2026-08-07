@@ -574,8 +574,8 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
             strings.minute_suffix,
         ));
         lines.push(format_recommendation_line(
-            strings.radar_intelligence_weighted,
-            computed.value.intelligence_weighted.as_ref(),
+            strings.radar_hard_problem,
+            computed.value.hard_problem.as_ref(),
             strings.radar_no_eligible,
             strings.minute_suffix,
         ));
@@ -585,7 +585,7 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
             strings.radar_data_unavailable,
         ));
         lines.push(format_unavailable_line(
-            strings.radar_intelligence_weighted,
+            strings.radar_hard_problem,
             strings.radar_data_unavailable,
         ));
     }
@@ -765,7 +765,7 @@ mod tests {
                     4.70,
                     20.0,
                 )),
-                intelligence_weighted: Some(recommendation_with_metrics(
+                hard_problem: Some(recommendation_with_metrics(
                     "gpt-5.6-sol",
                     "xhigh",
                     105.8,
@@ -845,7 +845,7 @@ mod tests {
         assert!(text.contains("◆ 速度位\r\n  【Sol medium】 · IQ 91.1 · $3.74"));
         assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
         assert!(text.contains("◆ 日常推荐\r\n  【Terra max】 · IQ 93.8 · $4.70 · 20.0分"));
-        assert!(text.contains("◆ 偏智力\r\n  【Sol xhigh】 · IQ 105.8 · $6.19 · 30.0分"));
+        assert!(text.contains("◆ 难题推荐\r\n  【Sol xhigh】 · IQ 105.8 · $6.19 · 30.0分"));
     }
 
     #[test]
@@ -883,7 +883,7 @@ mod tests {
             "CodexRadar · Updated 1m ago\r\nNon-personalized community recommendation · Cached data · May be outdated\r\n"
         ));
         assert!(text.contains("◆ Daily\r\n  Data temporarily unavailable"));
-        assert!(text.contains("◆ IQ-first\r\n  Data temporarily unavailable"));
+        assert!(text.contains("◆ Hard problem\r\n  Data temporarily unavailable"));
     }
 
     #[test]
@@ -907,7 +907,7 @@ mod tests {
 
         assert!(text.contains("Cached data · May be outdated"));
         assert!(text.contains("◆ Daily\r\n  【Terra max】"));
-        assert!(text.contains("◆ IQ-first\r\n  【Sol xhigh】"));
+        assert!(text.contains("◆ Hard problem\r\n  【Sol xhigh】"));
     }
 
     #[test]

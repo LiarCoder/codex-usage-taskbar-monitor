@@ -23,6 +23,11 @@ const DAILY_PRICE_WEIGHT: f64 = 0.7;
 const DAILY_TIME_WEIGHT: f64 = 0.3;
 const DAILY_PRICE_REFERENCE_USD: f64 = 1.0;
 const DAILY_TIME_REFERENCE_MINUTES: f64 = 10.0;
+const HARD_TARGET_PRICE_USD: f64 = 8.0;
+const HARD_TARGET_MINUTES: f64 = 30.0;
+const HARD_MAX_PRICE_USD: f64 = 9.0;
+const HARD_MAX_MINUTES: f64 = 30.0;
+const HARD_IQ_GAP: f64 = 10.0;
 const WILSON_Z_SCORE: f64 = 1.959_963_984_540_054;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -91,7 +96,7 @@ pub(crate) struct ComputedRecommendations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) daily: Option<Recommendation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) intelligence_weighted: Option<Recommendation>,
+    pub(crate) hard_problem: Option<Recommendation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -398,26 +403,13 @@ fn rank_candidates(candidates: &[Recommendation]) -> ComputedRecommendations {
     if candidates.is_empty() {
         return ComputedRecommendations {
             daily: None,
-            intelligence_weighted: None,
+            hard_problem: None,
         };
     }
 
-    let maximum_iq = candidates
-        .iter()
-        .map(|candidate| candidate.iq)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let minimum_cost = candidates
-        .iter()
-        .map(|candidate| candidate.average_cost_usd)
-        .fold(f64::INFINITY, f64::min);
-
     ComputedRecommendations {
         daily: select_daily(candidates),
-        intelligence_weighted: select_best(candidates, |candidate| {
-            let intelligence_score = candidate.iq / maximum_iq;
-            let cost_score = minimum_cost / candidate.average_cost_usd;
-            0.8 * intelligence_score + 0.2 * cost_score
-        }),
+        hard_problem: select_hard(candidates),
     }
 }
 
@@ -445,10 +437,93 @@ fn select_daily(candidates: &[Recommendation]) -> Option<Recommendation> {
 }
 
 fn daily_cost(candidate: &Recommendation) -> Option<f64> {
+    weighted_cost(
+        candidate,
+        DAILY_PRICE_REFERENCE_USD,
+        DAILY_TIME_REFERENCE_MINUTES,
+    )
+}
+
+fn hard_cost(candidate: &Recommendation) -> Option<f64> {
+    weighted_cost(candidate, HARD_TARGET_PRICE_USD, HARD_TARGET_MINUTES)
+}
+
+fn weighted_cost(
+    candidate: &Recommendation,
+    price_reference_usd: f64,
+    time_reference_minutes: f64,
+) -> Option<f64> {
     let minutes = candidate.average_minutes?;
-    let score = (candidate.average_cost_usd / DAILY_PRICE_REFERENCE_USD).powf(DAILY_PRICE_WEIGHT)
-        * (minutes / DAILY_TIME_REFERENCE_MINUTES).powf(DAILY_TIME_WEIGHT);
+    let score = (candidate.average_cost_usd / price_reference_usd).powf(DAILY_PRICE_WEIGHT)
+        * (minutes / time_reference_minutes).powf(DAILY_TIME_WEIGHT);
     score.is_finite().then_some(score)
+}
+
+fn select_hard(candidates: &[Recommendation]) -> Option<Recommendation> {
+    let eligible = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.average_cost_usd <= HARD_MAX_PRICE_USD
+                && candidate
+                    .average_minutes
+                    .is_some_and(|minutes| minutes <= HARD_MAX_MINUTES)
+        })
+        .collect::<Vec<_>>();
+    let cost_leader = eligible
+        .iter()
+        .filter_map(|candidate| hard_cost(candidate).map(|cost| (*candidate, cost)))
+        .max_by(|(left, left_cost), (right, right_cost)| {
+            right_cost
+                .total_cmp(left_cost)
+                .then_with(|| credible_iq(left).total_cmp(&credible_iq(right)))
+                .then_with(|| compare_hard_ties(left, right))
+        })
+        .map(|(candidate, _)| candidate)?;
+    let cost_leader_iq = credible_iq(cost_leader);
+    let high_iq_candidates = eligible
+        .iter()
+        .copied()
+        .filter(|candidate| credible_iq(candidate) >= cost_leader_iq + HARD_IQ_GAP)
+        .collect::<Vec<_>>();
+
+    if high_iq_candidates.is_empty() {
+        eligible
+            .iter()
+            .filter_map(|candidate| hard_cost(candidate).map(|cost| (*candidate, cost)))
+            .max_by(|(left, left_cost), (right, right_cost)| {
+                right_cost
+                    .total_cmp(left_cost)
+                    .then_with(|| credible_iq(left).total_cmp(&credible_iq(right)))
+                    .then_with(|| compare_hard_ties(left, right))
+            })
+            .map(|(candidate, _)| candidate.clone())
+    } else {
+        high_iq_candidates
+            .into_iter()
+            .max_by(compare_hard_iq)
+            .cloned()
+    }
+}
+
+fn compare_hard_iq(left: &&Recommendation, right: &&Recommendation) -> Ordering {
+    credible_iq(left)
+        .total_cmp(&credible_iq(right))
+        .then_with(|| compare_hard_ties(left, right))
+}
+
+fn compare_hard_ties(left: &Recommendation, right: &Recommendation) -> Ordering {
+    right
+        .average_cost_usd
+        .total_cmp(&left.average_cost_usd)
+        .then_with(|| {
+            right
+                .average_minutes
+                .unwrap_or(f64::INFINITY)
+                .total_cmp(&left.average_minutes.unwrap_or(f64::INFINITY))
+        })
+        .then_with(|| left.valid_tasks.cmp(&right.valid_tasks))
+        .then_with(|| right.model.cmp(&left.model))
+        .then_with(|| right.effort.cmp(&left.effort))
 }
 
 fn credible_iq(candidate: &Recommendation) -> f64 {
@@ -470,31 +545,6 @@ fn credible_iq(candidate: &Recommendation) -> f64 {
             .sqrt()
         / denominator;
     (center - margin).max(0.0) * 150.0
-}
-
-fn select_best(
-    candidates: &[Recommendation],
-    score: impl Fn(&Recommendation) -> f64,
-) -> Option<Recommendation> {
-    candidates
-        .iter()
-        .max_by(|left, right| compare_candidates(left, right, score(left), score(right)))
-        .cloned()
-}
-
-fn compare_candidates(
-    left: &Recommendation,
-    right: &Recommendation,
-    left_score: f64,
-    right_score: f64,
-) -> Ordering {
-    left_score
-        .total_cmp(&right_score)
-        .then_with(|| left.iq.total_cmp(&right.iq))
-        .then_with(|| right.average_cost_usd.total_cmp(&left.average_cost_usd))
-        .then_with(|| left.valid_tasks.cmp(&right.valid_tasks))
-        .then_with(|| right.model.cmp(&left.model))
-        .then_with(|| right.effort.cmp(&left.effort))
 }
 
 #[cfg(test)]
@@ -767,10 +817,7 @@ mod tests {
         let recommendations = parse_efficiency_recommendations(&json).unwrap();
 
         assert_eq!(recommendations.daily.unwrap().model, "boundary");
-        assert_eq!(
-            recommendations.intelligence_weighted.unwrap().model,
-            "boundary"
-        );
+        assert_eq!(recommendations.hard_problem.unwrap().model, "boundary");
     }
 
     #[test]
@@ -827,10 +874,100 @@ mod tests {
         let recommendations = parse_efficiency_recommendations(&json).unwrap();
 
         assert_eq!(recommendations.daily.unwrap().model, "alpha");
-        assert_eq!(
-            recommendations.intelligence_weighted.unwrap().model,
-            "alpha"
-        );
+        assert_eq!(recommendations.hard_problem.unwrap().model, "alpha");
+    }
+
+    #[test]
+    fn hard_recommendation_prefers_cost_when_credible_iq_gap_is_small() {
+        let json = efficiency_payload(&[
+            FixturePoint {
+                model: "low-cost",
+                effort: "high",
+                passed_tasks: 60,
+                valid_tasks: 100,
+                cost_usd: Some(1.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "higher-iq",
+                effort: "high",
+                passed_tasks: 63,
+                valid_tasks: 100,
+                cost_usd: Some(8.0),
+                minutes: Some(30.0),
+                cost_complete: None,
+            },
+        ]);
+
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
+
+        assert_eq!(recommendations.hard_problem.unwrap().model, "low-cost");
+    }
+
+    #[test]
+    fn hard_recommendation_prefers_higher_iq_when_gap_reaches_ten_points() {
+        let json = efficiency_payload(&[
+            FixturePoint {
+                model: "low-cost",
+                effort: "high",
+                passed_tasks: 60,
+                valid_tasks: 100,
+                cost_usd: Some(1.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "higher-iq",
+                effort: "high",
+                passed_tasks: 70,
+                valid_tasks: 100,
+                cost_usd: Some(8.0),
+                minutes: Some(30.0),
+                cost_complete: None,
+            },
+        ]);
+
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
+
+        assert_eq!(recommendations.hard_problem.unwrap().model, "higher-iq");
+    }
+
+    #[test]
+    fn hard_recommendation_excludes_price_and_time_overrides() {
+        let json = efficiency_payload(&[
+            FixturePoint {
+                model: "acceptable",
+                effort: "high",
+                passed_tasks: 60,
+                valid_tasks: 100,
+                cost_usd: Some(1.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "too-expensive",
+                effort: "high",
+                passed_tasks: 100,
+                valid_tasks: 100,
+                cost_usd: Some(12.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "too-slow",
+                effort: "high",
+                passed_tasks: 100,
+                valid_tasks: 100,
+                cost_usd: Some(8.0),
+                minutes: Some(40.0),
+                cost_complete: None,
+            },
+        ]);
+
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
+
+        assert_eq!(recommendations.hard_problem.unwrap().model, "acceptable");
     }
 
     #[test]
@@ -848,7 +985,7 @@ mod tests {
         let recommendations = parse_efficiency_recommendations(&json).unwrap();
 
         assert!(recommendations.daily.is_none());
-        assert!(recommendations.intelligence_weighted.is_none());
+        assert!(recommendations.hard_problem.is_none());
     }
 
     #[test]

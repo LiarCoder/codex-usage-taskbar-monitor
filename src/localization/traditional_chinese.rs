@@ -55,7 +55,7 @@ pub(super) const STRINGS: Strings = Strings {
     radar_smart_recommendation: "聰明位",
     radar_community_daily: "社群日常推薦",
     radar_daily_recommendation: "日常推薦",
-    radar_intelligence_weighted: "偏智力",
+    radar_hard_problem: "難題推薦",
     radar_tooltip_header: "CodexRadar · {age}前更新 · 非個人化社群推薦",
     radar_cached_warning: "快取資料 · 可能已過期",
     radar_loading: "正在取得雷達推薦資料...",

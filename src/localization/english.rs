@@ -54,7 +54,7 @@ pub(super) const STRINGS: Strings = Strings {
     radar_smart_recommendation: "Smart",
     radar_community_daily: "Community daily",
     radar_daily_recommendation: "Daily",
-    radar_intelligence_weighted: "IQ-first",
+    radar_hard_problem: "Hard problem",
     radar_tooltip_header:
         "CodexRadar · Updated {age} ago · Non-personalized community recommendation",
     radar_cached_warning: "Cached data · May be outdated",
