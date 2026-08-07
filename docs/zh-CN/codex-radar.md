@@ -12,11 +12,12 @@ CodexRadar 是一个可选的实验性增强功能，用于显示非个性化的
 
 ![CodexRadar 推荐提示](../images/codex-radar-recommendation.png)
 
-## 三类推荐
+## 推荐显示
 
 | 显示项 | 选择方式 |
 | --- | --- |
-| 雷达推荐 | 使用 CodexRadar `daily_development` 中发布的 `value` 推荐 |
+| 速度位 / 聪明位 | 当接口返回明确的 `speed` / `smart` 槽位时分别显示；旧版 `value` 推荐兼容为速度位 |
+| 日常开发推荐 | 当接口返回没有槽位的 `daily_development` 列表时，按原顺序展示，不推断每一项的位置语义 |
 | IQ/$ | 在 IQ 不低于 90 且平均价格为正的组合中，选择 `IQ / 平均价格` 最高者 |
 | 偏智力 | 在同一候选集中，按 `0.8 × IQ 相对得分 + 0.2 × 价格相对得分` 选择，更偏重 IQ |
 

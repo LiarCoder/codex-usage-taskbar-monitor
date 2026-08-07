@@ -521,16 +521,47 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
     }
 
     let radar = cache.radar.as_ref().map(|source| &source.value);
-    lines.push(format_recommendation_line(
-        strings.radar_speed_recommendation,
-        radar.and_then(|recommendations| recommendations.speed.as_ref()),
-        strings.radar_data_unavailable,
-    ));
-    lines.push(format_recommendation_line(
-        strings.radar_smart_recommendation,
-        radar.and_then(|recommendations| recommendations.smart.as_ref()),
-        strings.radar_data_unavailable,
-    ));
+    if let Some(recommendations) = radar {
+        let has_slot_recommendations =
+            recommendations.speed.is_some() || recommendations.smart.is_some();
+        if has_slot_recommendations {
+            lines.push(format_recommendation_line(
+                strings.radar_speed_recommendation,
+                recommendations.speed.as_ref(),
+                strings.radar_data_unavailable,
+            ));
+            lines.push(format_recommendation_line(
+                strings.radar_smart_recommendation,
+                recommendations.smart.as_ref(),
+                strings.radar_data_unavailable,
+            ));
+        }
+        if !recommendations.daily_development.is_empty() {
+            lines.push(format_recommendations_line(
+                strings.radar_daily_development,
+                &recommendations.daily_development,
+            ));
+        }
+        if !has_slot_recommendations && recommendations.daily_development.is_empty() {
+            lines.push(format_unavailable_line(
+                strings.radar_speed_recommendation,
+                strings.radar_data_unavailable,
+            ));
+            lines.push(format_unavailable_line(
+                strings.radar_smart_recommendation,
+                strings.radar_data_unavailable,
+            ));
+        }
+    } else {
+        lines.push(format_unavailable_line(
+            strings.radar_speed_recommendation,
+            strings.radar_data_unavailable,
+        ));
+        lines.push(format_unavailable_line(
+            strings.radar_smart_recommendation,
+            strings.radar_data_unavailable,
+        ));
+    }
 
     if let Some(computed) = cache.computed.as_ref() {
         lines.push(format_recommendation_line(
@@ -574,7 +605,23 @@ fn format_recommendation_line(
         return format_unavailable_line(label, unavailable);
     };
     format!(
-        "◆ {label}\r\n  【{} {}】 · IQ {:.1} · ${:.2}",
+        "◆ {label}\r\n{}",
+        format_recommendation_value(recommendation)
+    )
+}
+
+fn format_recommendations_line(label: &str, recommendations: &[Recommendation]) -> String {
+    let values = recommendations
+        .iter()
+        .map(format_recommendation_value)
+        .collect::<Vec<_>>()
+        .join("\r\n");
+    format!("◆ {label}\r\n{values}")
+}
+
+fn format_recommendation_value(recommendation: &Recommendation) -> String {
+    format!(
+        "  【{} {}】 · IQ {:.1} · ${:.2}",
         radar_data::model_display_name(&recommendation.model),
         recommendation.effort,
         recommendation.iq,
@@ -675,6 +722,7 @@ mod tests {
             value: crate::radar::RadarRecommendations {
                 speed: Some(recommendation("gpt-5.6-sol", "medium", 91.07, 3.742)),
                 smart: Some(recommendation("gpt-5.5", "xhigh", 100.45, 5.737)),
+                daily_development: Vec::new(),
             },
             validated_at_unix: 100,
             validator: None,
@@ -757,6 +805,28 @@ mod tests {
         assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
         assert!(text.contains("◆ IQ/$\r\n  【Terra max】 · IQ 93.8 · $4.70"));
         assert!(text.contains("◆ 偏智力\r\n  【Sol xhigh】 · IQ 105.8 · $6.19"));
+    }
+
+    #[test]
+    fn formats_untagged_radar_recommendations_as_daily_development() {
+        let mut cache = full_cache();
+        cache.radar.as_mut().unwrap().value = crate::radar::RadarRecommendations {
+            speed: None,
+            smart: None,
+            daily_development: vec![
+                recommendation("gpt-5.5", "high", 95.09, 3.663656),
+                recommendation("gpt-5.6-luna", "max", 95.09, 0.47011),
+            ],
+        };
+        let app_state = state(LanguageId::English, RadarStatus::Ready, cache);
+
+        let text = format_radar_tooltip(&app_state, 100 + 60);
+
+        assert!(text.contains(
+            "◆ Daily development\r\n  【GPT-5.5 high】 · IQ 95.1 · $3.66\r\n  【Luna max】 · IQ 95.1 · $0.47"
+        ));
+        assert!(!text.contains("◆ Speed"));
+        assert!(!text.contains("◆ Smart"));
     }
 
     #[test]

@@ -52,6 +52,7 @@ pub(super) const STRINGS: Strings = Strings {
     codex_radar_consent_body: "Lorsqu'elle est activée, cette application se connecte périodiquement à CodexRadar pour obtenir les recommandations de la communauté.\r\n\r\nElle n'envoie ni votre Codex Token, ni vos données d'utilisation, ni le contenu de vos projets. Comme pour toute requête web, CodexRadar peut toutefois voir des informations réseau courantes telles que votre adresse IP et votre User-Agent.\r\n\r\nActiver CodexRadar ?",
     radar_speed_recommendation: "Vitesse",
     radar_smart_recommendation: "Intelligence",
+    radar_daily_development: "Recommandations pour le développement quotidien",
     radar_iq_per_dollar: "IQ/$",
     radar_intelligence_weighted: "Priorité IQ",
     radar_tooltip_header:

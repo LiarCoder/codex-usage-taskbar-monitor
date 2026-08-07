@@ -34,6 +34,8 @@ pub(crate) struct RadarRecommendations {
     pub(crate) speed: Option<Recommendation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) smart: Option<Recommendation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) daily_development: Vec<Recommendation>,
 }
 
 impl<'de> Deserialize<'de> for RadarRecommendations {
@@ -50,6 +52,8 @@ impl<'de> Deserialize<'de> for RadarRecommendations {
                 speed: Option<Recommendation>,
                 #[serde(default)]
                 smart: Option<Recommendation>,
+                #[serde(default)]
+                daily_development: Vec<Recommendation>,
             },
         }
 
@@ -57,8 +61,17 @@ impl<'de> Deserialize<'de> for RadarRecommendations {
             WireFormat::Legacy(recommendation) => Self {
                 speed: Some(recommendation),
                 smart: None,
+                daily_development: Vec::new(),
             },
-            WireFormat::Current { speed, smart } => Self { speed, smart },
+            WireFormat::Current {
+                speed,
+                smart,
+                daily_development,
+            } => Self {
+                speed,
+                smart,
+                daily_development,
+            },
         })
     }
 }
@@ -147,33 +160,43 @@ pub(crate) fn parse_radar_recommendation(
     let mut speed = None;
     let mut smart = None;
     let mut legacy_value = None;
+    let mut daily_development = Vec::new();
+    let parse_item = |item: RadarRecommendationItem| {
+        recommendation_from_parts(
+            item.model,
+            item.effort,
+            item.iq,
+            item.average_cost_usd,
+            item.samples,
+        )
+        .ok_or(RadarDataError::InvalidData)
+    };
     for item in items {
         let destination = match item.slot.as_deref() {
             Some("speed") if speed.is_none() => &mut speed,
             Some("smart") if smart.is_none() => &mut smart,
             Some("value") if legacy_value.is_none() => &mut legacy_value,
+            None => {
+                daily_development.push(parse_item(item)?);
+                continue;
+            }
             _ => continue,
         };
-        *destination = Some(
-            recommendation_from_parts(
-                item.model,
-                item.effort,
-                item.iq,
-                item.average_cost_usd,
-                item.samples,
-            )
-            .ok_or(RadarDataError::InvalidData)?,
-        );
+        *destination = Some(parse_item(item)?);
     }
 
     if speed.is_none() {
         speed = legacy_value;
     }
-    if speed.is_none() && smart.is_none() {
+    if speed.is_none() && smart.is_none() && daily_development.is_empty() {
         return Err(RadarDataError::RecommendationUnavailable);
     }
 
-    Ok(RadarRecommendations { speed, smart })
+    Ok(RadarRecommendations {
+        speed,
+        smart,
+        daily_development,
+    })
 }
 
 pub(crate) fn parse_efficiency_recommendations(
@@ -366,6 +389,40 @@ mod tests {
         assert_eq!(speed.effort, "medium");
         assert_eq!(speed.valid_tasks, 112);
         assert_eq!(recommendations.smart.unwrap().effort, "xhigh");
+    }
+
+    #[test]
+    fn keeps_untagged_daily_development_recommendations_unlabeled() {
+        let json = br#"{
+            "schema": 1,
+            "recommendations": [{
+                "key": "daily_development",
+                "items": [
+                    {
+                        "model": "gpt-5.5",
+                        "effort": "high",
+                        "iq": 95.09,
+                        "average_cost_usd": 3.663656,
+                        "samples": 112
+                    },
+                    {
+                        "model": "gpt-5.6-luna",
+                        "effort": "max",
+                        "iq": 95.09,
+                        "average_cost_usd": 0.47011,
+                        "samples": 112
+                    }
+                ]
+            }]
+        }"#;
+
+        let recommendations = parse_radar_recommendation(json).unwrap();
+
+        assert!(recommendations.speed.is_none());
+        assert!(recommendations.smart.is_none());
+        assert_eq!(recommendations.daily_development.len(), 2);
+        assert_eq!(recommendations.daily_development[0].model, "gpt-5.5");
+        assert_eq!(recommendations.daily_development[1].model, "gpt-5.6-luna");
     }
 
     #[test]
