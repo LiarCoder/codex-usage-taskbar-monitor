@@ -1,6 +1,6 @@
 ---
 name: release-app-version
-description: Upgrades this Rust application's semantic version and completes its GitHub release pipeline through asset verification. Use when the user asks to “升级应用版本”, “发布新版本”, bump or release the app version, merge a release PR, create a v-prefixed tag, or trigger the release workflow.
+description: Upgrades this Rust application's semantic version, completes its GitHub release pipeline through asset verification, and cleans stale branches after a successful release. Use when the user asks to “升级应用版本”, “发布新版本”, bump or release the app version, merge a release PR, create a v-prefixed tag, or trigger the release workflow.
 ---
 
 # Release App Version
@@ -59,9 +59,19 @@ cargo build --release
 7. On failure, inspect the failing step and logs before changing anything; route CI repair through the GitHub CI-fix workflow when appropriate.
 8. On success, verify the GitHub Release is published and the expected `codex-usage-taskbar-monitor.exe` asset is uploaded.
 
+## Post-release branch cleanup
+
+Only after the Release is published and the expected asset is verified:
+
+1. Invoke the `git-clean-branches` skill to audit and conservatively clean stale branches.
+2. Pass the release context to that skill: retained base `main`, released tag `v{version}`, the merged release PR, any merged feature PR branch just released, and `origin` as the writable personal remote.
+3. Let `git-clean-branches` prove worktree usage, branch protection, authoritative reachability, exact-SHA mirrors, and age before deleting anything. Never delete authoritative/read-only refs, protected branches, active worktree branches, or branches whose safety cannot be proven.
+4. If cleanup is blocked by ambiguous ownership, reachability, creation age, or unique history, keep the branch and report the exception instead of force-deleting it.
+5. Include the cleanup audit, deleted local/remote branches, retained exceptions, and any cleanup validation result in the completion report.
+
 ## Completion report
 
-Report the version commit, PR link, merge SHA, tag, workflow link and conclusion, Release link, asset name, and SHA-256 digest. State which validation commands passed.
+Report the version commit, PR link, merge SHA, tag, workflow link and conclusion, Release link, asset name, SHA-256 digest, and post-release branch cleanup result. State which validation commands passed.
 
 ## Examples
 
