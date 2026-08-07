@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use windows::Win32::UI::Controls::{
     InitCommonControlsEx, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, TOOLTIPS_CLASSW, TTF_ABSOLUTE,
@@ -511,14 +511,19 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
     .min()
     .unwrap_or(now_unix);
     let age = format_radar_age(now_unix.saturating_sub(oldest_update), strings);
+    let next_update_unix = now_unix.saturating_add(radar_data::next_due_in_secs(cache, now_unix));
+    let next_update = native::format_local_date_time(
+        std::time::UNIX_EPOCH + Duration::from_secs(next_update_unix),
+    )
+    .unwrap_or_else(|| "--".to_string());
+    let cached_warning = (app_state.radar.displaying_cached_data || !cache.last_refresh_complete)
+        .then_some(strings.radar_cached_warning);
     let mut lines = vec![format_radar_tooltip_header(
         strings.radar_tooltip_header,
         &age,
+        &next_update,
+        cached_warning,
     )];
-    if app_state.radar.displaying_cached_data || !cache.last_refresh_complete {
-        lines[0].push_str(" · ");
-        lines[0].push_str(strings.radar_cached_warning);
-    }
 
     let radar = cache.radar.as_ref().map(|source| &source.value);
     if let Some(recommendations) = radar {
@@ -593,12 +598,22 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
     lines.join("\r\n")
 }
 
-fn format_radar_tooltip_header(template: &str, age: &str) -> String {
-    let header = template.replace("{age}", age);
-    let Some((summary, community_note)) = header.rsplit_once(" · ") else {
+fn format_radar_tooltip_header(
+    template: &str,
+    age: &str,
+    next_update: &str,
+    cached_warning: Option<&str>,
+) -> String {
+    let header = template
+        .replace("{age}", age)
+        .replace("{next_update}", next_update);
+    let Some(cached_warning) = cached_warning else {
         return header;
     };
-    format!("{summary}\r\n{community_note}")
+    let Some((summary, schedule)) = header.split_once("\r\n") else {
+        return format!("{header} · {cached_warning}");
+    };
+    format!("{summary} · {cached_warning}\r\n{schedule}")
 }
 
 fn format_recommendation_line(
@@ -777,6 +792,7 @@ mod tests {
             validator: None,
         });
         cache.last_refresh_complete = true;
+        cache.last_attempt_unix = Some(100);
         cache
     }
 
@@ -841,11 +857,26 @@ mod tests {
 
         let text = format_radar_tooltip(&app_state, 100 + 12 * 60);
 
-        assert!(text.starts_with("CodexRadar · 12分前更新\r\n非个性化社区推荐\r\n"));
+        assert!(text.starts_with("CodexRadar · 12分前更新\r\n下次更新："));
+        assert!(!text.contains("非个性化社区推荐"));
         assert!(text.contains("◆ 速度位\r\n  【Sol medium】 · IQ 91.1 · $3.74"));
         assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
         assert!(text.contains("◆ 日常推荐\r\n  【Terra max】 · IQ 93.8 · $4.70 · 20.0分"));
         assert!(text.contains("◆ 难题推荐\r\n  【Sol xhigh】 · IQ 105.8 · $6.19 · 30.0分"));
+    }
+
+    #[test]
+    fn keeps_cached_warning_on_the_first_header_line() {
+        let mut app_state = state(
+            LanguageId::SimplifiedChinese,
+            RadarStatus::Ready,
+            full_cache(),
+        );
+        app_state.radar.displaying_cached_data = true;
+
+        let text = format_radar_tooltip(&app_state, 100 + 12 * 60);
+
+        assert!(text.starts_with("CodexRadar · 12分前更新 · 缓存数据，可能已过期\r\n下次更新："));
     }
 
     #[test]
@@ -880,7 +911,7 @@ mod tests {
         let text = format_radar_tooltip(&app_state, 100 + 60);
 
         assert!(text.starts_with(
-            "CodexRadar · Updated 1m ago\r\nNon-personalized community recommendation · Cached data · May be outdated\r\n"
+            "CodexRadar · Updated 1m ago · Cached data, may be outdated\r\nNext update: "
         ));
         assert!(text.contains("◆ Daily\r\n  Data temporarily unavailable"));
         assert!(text.contains("◆ Hard problem\r\n  Data temporarily unavailable"));
@@ -905,7 +936,7 @@ mod tests {
 
         let text = format_radar_tooltip(&app_state, 100 + 60);
 
-        assert!(text.contains("Cached data · May be outdated"));
+        assert!(text.contains("Cached data, may be outdated"));
         assert!(text.contains("◆ Daily\r\n  【Terra max】"));
         assert!(text.contains("◆ Hard problem\r\n  【Sol xhigh】"));
     }

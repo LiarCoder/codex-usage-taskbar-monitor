@@ -56,8 +56,8 @@ pub(super) const STRINGS: Strings = Strings {
     radar_daily_recommendation: "Daily",
     radar_hard_problem: "Hard problem",
     radar_tooltip_header:
-        "CodexRadar · Updated {age} ago · Non-personalized community recommendation",
-    radar_cached_warning: "Cached data · May be outdated",
+        "CodexRadar · Updated {age} ago\r\nNext update: {next_update}",
+    radar_cached_warning: "Cached data, may be outdated",
     radar_loading: "Fetching CodexRadar recommendations...",
     radar_data_unavailable: "Data temporarily unavailable",
     radar_fetch_error: "Unable to fetch CodexRadar recommendations",

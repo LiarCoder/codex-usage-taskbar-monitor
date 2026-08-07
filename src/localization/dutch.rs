@@ -56,8 +56,8 @@ pub(super) const STRINGS: Strings = Strings {
     radar_daily_recommendation: "Dagelijks",
     radar_hard_problem: "Moeilijk probleem",
     radar_tooltip_header:
-        "CodexRadar · {age} geleden bijgewerkt · Niet-gepersonaliseerd communityadvies",
-    radar_cached_warning: "Cachegegevens · Mogelijk verouderd",
+        "CodexRadar · {age} geleden bijgewerkt\r\nVolgende update: {next_update}",
+    radar_cached_warning: "Cachegegevens, mogelijk verouderd",
     radar_loading: "CodexRadar-aanbevelingen ophalen...",
     radar_data_unavailable: "Gegevens tijdelijk niet beschikbaar",
     radar_fetch_error: "Kan CodexRadar-aanbevelingen niet ophalen",
