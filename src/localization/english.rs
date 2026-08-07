@@ -52,7 +52,8 @@ pub(super) const STRINGS: Strings = Strings {
     codex_radar_consent_body: "When enabled, this app periodically connects to CodexRadar for community recommendation data.\r\n\r\nIt does not send your Codex Token, usage data, or project content. As with any website request, CodexRadar can still see routine network information such as your IP address and User-Agent.\r\n\r\nEnable CodexRadar?",
     radar_speed_recommendation: "Speed",
     radar_smart_recommendation: "Smart",
-    radar_daily_development: "Daily development",
+    radar_community_daily: "Community daily",
+    radar_daily_recommendation: "Daily",
     radar_intelligence_weighted: "IQ-first",
     radar_tooltip_header:
         "CodexRadar · Updated {age} ago · Non-personalized community recommendation",

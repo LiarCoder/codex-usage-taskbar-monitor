@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -16,8 +17,13 @@ pub(crate) use client::{fetch_recommendations, FetchValidators, RadarRefreshResu
 
 pub(crate) const MIN_RECOMMENDED_IQ: f64 = 90.0;
 const RADAR_INSIGHTS_SCHEMA: u32 = 1;
-const EFFICIENCY_SCHEMA: u32 = 2;
+const EFFICIENCY_SCHEMA: u32 = 1;
 const MAX_LABEL_CHARS: usize = 64;
+const DAILY_PRICE_WEIGHT: f64 = 0.7;
+const DAILY_TIME_WEIGHT: f64 = 0.3;
+const DAILY_PRICE_REFERENCE_USD: f64 = 1.0;
+const DAILY_TIME_REFERENCE_MINUTES: f64 = 10.0;
+const WILSON_Z_SCORE: f64 = 1.959_963_984_540_054;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Recommendation {
@@ -25,6 +31,10 @@ pub(crate) struct Recommendation {
     pub(crate) effort: String,
     pub(crate) iq: f64,
     pub(crate) average_cost_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) average_minutes: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) passed_tasks: Option<u32>,
     pub(crate) valid_tasks: u32,
 }
 
@@ -79,6 +89,8 @@ impl<'de> Deserialize<'de> for RadarRecommendations {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ComputedRecommendations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) daily: Option<Recommendation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) intelligence_weighted: Option<Recommendation>,
 }
 
@@ -128,17 +140,34 @@ struct RadarRecommendationItem {
 #[derive(Deserialize)]
 struct EfficiencyResponse {
     schema: u32,
-    points: Vec<EfficiencyPoint>,
+    combos: Vec<EfficiencyCombo>,
+    tasks: Vec<EfficiencyTask>,
+    cells: HashMap<String, EfficiencyCell>,
 }
 
 #[derive(Deserialize)]
-struct EfficiencyPoint {
+struct EfficiencyCombo {
     model: String,
     effort: String,
-    iq: f64,
-    average_price_usd: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct EfficiencyTask {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct EfficiencyCell {
     #[serde(default)]
-    valid_tasks: u32,
+    ran_by: Vec<EfficiencyRun>,
+}
+
+#[derive(Deserialize)]
+struct EfficiencyRun {
+    passed: Option<bool>,
+    duration_sec: Option<f64>,
+    actual_cost_usd: Option<f64>,
+    cost_complete: Option<bool>,
 }
 
 pub(crate) fn parse_radar_recommendation(
@@ -208,41 +237,120 @@ pub(crate) fn parse_efficiency_recommendations(
         return Err(RadarDataError::UnsupportedSchema);
     }
 
-    let mut valid_points = 0usize;
-    let candidates: Vec<Recommendation> = response
-        .points
-        .into_iter()
-        .filter_map(|point| {
-            let model = sanitize_label(&point.model)?;
-            let effort = sanitize_label(&point.effort)?;
-            if !point.iq.is_finite() {
-                return None;
-            }
+    let mut complete_points = 0usize;
+    let mut candidates = Vec::new();
+    for combo in &response.combos {
+        let Some(model) = sanitize_label(&combo.model) else {
+            continue;
+        };
+        let Some(effort) = sanitize_label(&combo.effort) else {
+            continue;
+        };
+        let Some(point) = aggregate_efficiency_point(&response, combo, &effort) else {
+            continue;
+        };
+        let Some(average_cost_usd) = point.average_cost_usd else {
+            continue;
+        };
+        let Some(average_minutes) = point.average_minutes else {
+            continue;
+        };
+        if !average_cost_usd.is_finite()
+            || average_cost_usd <= 0.0
+            || !average_minutes.is_finite()
+            || average_minutes <= 0.0
+        {
+            continue;
+        }
+        complete_points += 1;
+        if point.iq < MIN_RECOMMENDED_IQ {
+            continue;
+        }
 
-            let cost = point.average_price_usd?;
-            if !cost.is_finite() || cost <= 0.0 {
-                return None;
-            }
-            valid_points += 1;
-            if point.iq < MIN_RECOMMENDED_IQ {
-                return None;
-            }
+        candidates.push(Recommendation {
+            model,
+            effort,
+            iq: point.iq,
+            average_cost_usd,
+            average_minutes: Some(average_minutes),
+            passed_tasks: Some(point.passed_tasks),
+            valid_tasks: point.valid_tasks,
+        });
+    }
 
-            Some(Recommendation {
-                model,
-                effort,
-                iq: point.iq,
-                average_cost_usd: cost,
-                valid_tasks: point.valid_tasks,
-            })
-        })
-        .collect();
-
-    if valid_points == 0 {
+    if complete_points == 0 {
         return Err(RadarDataError::InvalidData);
     }
 
     Ok(rank_candidates(&candidates))
+}
+
+struct AggregatedEfficiencyPoint {
+    iq: f64,
+    passed_tasks: u32,
+    valid_tasks: u32,
+    average_cost_usd: Option<f64>,
+    average_minutes: Option<f64>,
+}
+
+fn aggregate_efficiency_point(
+    response: &EfficiencyResponse,
+    combo: &EfficiencyCombo,
+    effort: &str,
+) -> Option<AggregatedEfficiencyPoint> {
+    let mut passed_tasks = 0u32;
+    let mut valid_tasks = 0u32;
+    let mut cost_sum = 0.0;
+    let mut cost_samples = 0u32;
+    let mut duration_sum_secs = 0.0;
+    let mut duration_samples = 0u32;
+
+    for task in &response.tasks {
+        let cell_key = format!("{}|{}|{}", task.id, combo.model, combo.effort);
+        let Some(cell) = response.cells.get(&cell_key) else {
+            continue;
+        };
+        let Some(run) = cell.ran_by.first() else {
+            continue;
+        };
+        let Some(passed) = run.passed else {
+            continue;
+        };
+        valid_tasks = valid_tasks.saturating_add(1);
+        if passed {
+            passed_tasks = passed_tasks.saturating_add(1);
+        }
+
+        if let Some(duration_sec) = run.duration_sec {
+            if duration_sec.is_finite() && duration_sec > 0.0 {
+                duration_sum_secs += duration_sec;
+                duration_samples = duration_samples.saturating_add(1);
+            }
+        }
+
+        if let Some(actual_cost_usd) = run.actual_cost_usd {
+            if actual_cost_usd.is_finite()
+                && actual_cost_usd > 0.0
+                && (effort != "ultra" || run.cost_complete == Some(true))
+            {
+                cost_sum += actual_cost_usd;
+                cost_samples = cost_samples.saturating_add(1);
+            }
+        }
+    }
+
+    if valid_tasks == 0 {
+        return None;
+    }
+
+    Some(AggregatedEfficiencyPoint {
+        iq: f64::from(passed_tasks) / f64::from(valid_tasks) * 150.0,
+        passed_tasks,
+        valid_tasks,
+        average_cost_usd: (cost_samples > 0).then(|| cost_sum / f64::from(cost_samples)),
+        average_minutes: (duration_samples > 0)
+            .then(|| duration_sum_secs / f64::from(duration_samples) / 60.0),
+    })
 }
 
 pub(crate) fn model_display_name(model: &str) -> String {
@@ -270,6 +378,8 @@ fn recommendation_from_parts(
         effort: sanitize_label(&effort)?,
         iq,
         average_cost_usd,
+        average_minutes: None,
+        passed_tasks: None,
         valid_tasks,
     })
 }
@@ -287,6 +397,7 @@ fn sanitize_label(value: &str) -> Option<String> {
 fn rank_candidates(candidates: &[Recommendation]) -> ComputedRecommendations {
     if candidates.is_empty() {
         return ComputedRecommendations {
+            daily: None,
             intelligence_weighted: None,
         };
     }
@@ -301,12 +412,64 @@ fn rank_candidates(candidates: &[Recommendation]) -> ComputedRecommendations {
         .fold(f64::INFINITY, f64::min);
 
     ComputedRecommendations {
+        daily: select_daily(candidates),
         intelligence_weighted: select_best(candidates, |candidate| {
             let intelligence_score = candidate.iq / maximum_iq;
             let cost_score = minimum_cost / candidate.average_cost_usd;
             0.8 * intelligence_score + 0.2 * cost_score
         }),
     }
+}
+
+fn select_daily(candidates: &[Recommendation]) -> Option<Recommendation> {
+    candidates
+        .iter()
+        .filter_map(|candidate| Some((candidate, daily_cost(candidate)?)))
+        .max_by(|(left, left_cost), (right, right_cost)| {
+            right_cost
+                .total_cmp(left_cost)
+                .then_with(|| credible_iq(left).total_cmp(&credible_iq(right)))
+                .then_with(|| left.iq.total_cmp(&right.iq))
+                .then_with(|| right.average_cost_usd.total_cmp(&left.average_cost_usd))
+                .then_with(|| {
+                    right
+                        .average_minutes
+                        .unwrap_or(f64::INFINITY)
+                        .total_cmp(&left.average_minutes.unwrap_or(f64::INFINITY))
+                })
+                .then_with(|| left.valid_tasks.cmp(&right.valid_tasks))
+                .then_with(|| right.model.cmp(&left.model))
+                .then_with(|| right.effort.cmp(&left.effort))
+        })
+        .map(|(candidate, _)| candidate.clone())
+}
+
+fn daily_cost(candidate: &Recommendation) -> Option<f64> {
+    let minutes = candidate.average_minutes?;
+    let score = (candidate.average_cost_usd / DAILY_PRICE_REFERENCE_USD).powf(DAILY_PRICE_WEIGHT)
+        * (minutes / DAILY_TIME_REFERENCE_MINUTES).powf(DAILY_TIME_WEIGHT);
+    score.is_finite().then_some(score)
+}
+
+fn credible_iq(candidate: &Recommendation) -> f64 {
+    let Some(passed_tasks) = candidate.passed_tasks else {
+        return candidate.iq;
+    };
+    if candidate.valid_tasks == 0 || passed_tasks > candidate.valid_tasks {
+        return candidate.iq;
+    }
+
+    let sample_size = f64::from(candidate.valid_tasks);
+    let pass_rate = f64::from(passed_tasks) / sample_size;
+    let z_squared = WILSON_Z_SCORE * WILSON_Z_SCORE;
+    let denominator = 1.0 + z_squared / sample_size;
+    let center = (pass_rate + z_squared / (2.0 * sample_size)) / denominator;
+    let margin = WILSON_Z_SCORE
+        * (pass_rate * (1.0 - pass_rate) / sample_size
+            + z_squared / (4.0 * sample_size * sample_size))
+            .sqrt()
+        / denominator;
+    (center - margin).max(0.0) * 150.0
 }
 
 fn select_best(
@@ -482,37 +645,128 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ranks_intelligence_weighted() {
-        let json = br#"{
-            "schema": 2,
-            "points": [
-                {"model":"gpt-5.6-sol","effort":"high","iq":89.999,"average_price_usd":1.0,"valid_tasks":112},
-                {"model":"gpt-5.6-sol","effort":"xhigh","iq":105.8,"average_price_usd":6.19,"valid_tasks":112},
-                {"model":"gpt-5.6-sol","effort":"max","iq":103.1,"average_price_usd":9.04,"valid_tasks":112},
-                {"model":"gpt-5.6-terra","effort":"max","iq":93.75,"average_price_usd":4.70,"valid_tasks":112}
-            ]
-        }"#;
+    struct FixturePoint<'a> {
+        model: &'a str,
+        effort: &'a str,
+        passed_tasks: u32,
+        valid_tasks: u32,
+        cost_usd: Option<f64>,
+        minutes: Option<f64>,
+        cost_complete: Option<bool>,
+    }
 
-        let recommendations = parse_efficiency_recommendations(json).unwrap();
+    fn efficiency_payload(points: &[FixturePoint<'_>]) -> Vec<u8> {
+        let task_count = points
+            .iter()
+            .map(|point| point.valid_tasks)
+            .max()
+            .unwrap_or_default();
+        let tasks = (0..task_count)
+            .map(|index| serde_json::json!({ "id": format!("task-{index}") }))
+            .collect::<Vec<_>>();
+        let combos = points
+            .iter()
+            .map(|point| serde_json::json!({ "model": point.model, "effort": point.effort }))
+            .collect::<Vec<_>>();
+        let mut cells = serde_json::Map::new();
 
-        let weighted = recommendations.intelligence_weighted.unwrap();
-        assert_eq!(weighted.model, "gpt-5.6-sol");
-        assert_eq!(weighted.effort, "xhigh");
+        for point in points {
+            for task_index in 0..point.valid_tasks {
+                let passed = task_index < point.passed_tasks;
+                let mut run = serde_json::Map::new();
+                run.insert("passed".to_string(), serde_json::json!(passed));
+                if let Some(minutes) = point.minutes {
+                    run.insert(
+                        "duration_sec".to_string(),
+                        serde_json::json!(minutes * 60.0),
+                    );
+                }
+                if let Some(cost_usd) = point.cost_usd {
+                    run.insert("actual_cost_usd".to_string(), serde_json::json!(cost_usd));
+                }
+                if let Some(cost_complete) = point.cost_complete {
+                    run.insert(
+                        "cost_complete".to_string(),
+                        serde_json::json!(cost_complete),
+                    );
+                }
+                let key = format!("task-{task_index}|{}|{}", point.model, point.effort);
+                cells.insert(
+                    key,
+                    serde_json::json!({ "ran_by": [serde_json::Value::Object(run)] }),
+                );
+            }
+        }
+
+        serde_json::to_vec(&serde_json::json!({
+            "schema": 1,
+            "combos": combos,
+            "tasks": tasks,
+            "cells": cells,
+        }))
+        .unwrap()
     }
 
     #[test]
-    fn includes_iq_equal_to_ninety_and_excludes_lower_values() {
-        let json = br#"{
-            "schema": 2,
-            "points": [
-                {"model":"below","effort":"high","iq":89.999,"average_price_usd":0.1,"valid_tasks":10},
-                {"model":"boundary","effort":"high","iq":90.0,"average_price_usd":5.0,"valid_tasks":10}
-            ]
-        }"#;
+    fn aggregates_raw_efficiency_cells_and_ignores_incomplete_ultra_costs() {
+        let json = efficiency_payload(&[
+            FixturePoint {
+                model: "gpt-5.6-sol",
+                effort: "high",
+                passed_tasks: 3,
+                valid_tasks: 4,
+                cost_usd: Some(2.0),
+                minutes: Some(2.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "gpt-5.6-luna",
+                effort: "ultra",
+                passed_tasks: 4,
+                valid_tasks: 4,
+                cost_usd: Some(3.0),
+                minutes: Some(3.0),
+                cost_complete: Some(false),
+            },
+        ]);
 
-        let recommendations = parse_efficiency_recommendations(json).unwrap();
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
+        let daily = recommendations.daily.unwrap();
 
+        assert_eq!(daily.model, "gpt-5.6-sol");
+        assert_eq!(daily.iq, 112.5);
+        assert_eq!(daily.average_cost_usd, 2.0);
+        assert_eq!(daily.average_minutes, Some(2.0));
+        assert_eq!(daily.passed_tasks, Some(3));
+        assert_eq!(daily.valid_tasks, 4);
+    }
+
+    #[test]
+    fn keeps_iq_ninety_boundary_and_excludes_lower_values() {
+        let json = efficiency_payload(&[
+            FixturePoint {
+                model: "below",
+                effort: "high",
+                passed_tasks: 5,
+                valid_tasks: 10,
+                cost_usd: Some(0.1),
+                minutes: Some(1.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "boundary",
+                effort: "high",
+                passed_tasks: 6,
+                valid_tasks: 10,
+                cost_usd: Some(5.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+        ]);
+
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
+
+        assert_eq!(recommendations.daily.unwrap().model, "boundary");
         assert_eq!(
             recommendations.intelligence_weighted.unwrap().model,
             "boundary"
@@ -520,17 +774,59 @@ mod tests {
     }
 
     #[test]
+    fn daily_recommendation_weights_price_more_than_time() {
+        let json = efficiency_payload(&[
+            FixturePoint {
+                model: "cheap-slow",
+                effort: "high",
+                passed_tasks: 6,
+                valid_tasks: 10,
+                cost_usd: Some(1.0),
+                minutes: Some(30.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "expensive-fast",
+                effort: "high",
+                passed_tasks: 10,
+                valid_tasks: 10,
+                cost_usd: Some(2.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+        ]);
+
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
+
+        assert_eq!(recommendations.daily.unwrap().model, "cheap-slow");
+    }
+
+    #[test]
     fn uses_deterministic_tie_breaking() {
-        let json = br#"{
-            "schema": 2,
-            "points": [
-                {"model":"beta","effort":"high","iq":90.0,"average_price_usd":5.0,"valid_tasks":10},
-                {"model":"alpha","effort":"high","iq":90.0,"average_price_usd":5.0,"valid_tasks":10}
-            ]
-        }"#;
+        let json = efficiency_payload(&[
+            FixturePoint {
+                model: "beta",
+                effort: "high",
+                passed_tasks: 9,
+                valid_tasks: 10,
+                cost_usd: Some(5.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+            FixturePoint {
+                model: "alpha",
+                effort: "high",
+                passed_tasks: 9,
+                valid_tasks: 10,
+                cost_usd: Some(5.0),
+                minutes: Some(10.0),
+                cost_complete: None,
+            },
+        ]);
 
-        let recommendations = parse_efficiency_recommendations(json).unwrap();
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
 
+        assert_eq!(recommendations.daily.unwrap().model, "alpha");
         assert_eq!(
             recommendations.intelligence_weighted.unwrap().model,
             "alpha"
@@ -539,42 +835,36 @@ mod tests {
 
     #[test]
     fn reports_no_recommendation_when_valid_points_do_not_qualify() {
-        let json = br#"{
-            "schema": 2,
-            "points": [
-                {"model":"gpt-5.6-luna","effort":"low","iq":4.0,"average_price_usd":0.2,"valid_tasks":112}
-            ]
-        }"#;
+        let json = efficiency_payload(&[FixturePoint {
+            model: "gpt-5.6-luna",
+            effort: "low",
+            passed_tasks: 4,
+            valid_tasks: 10,
+            cost_usd: Some(0.2),
+            minutes: Some(1.0),
+            cost_complete: None,
+        }]);
 
-        let recommendations = parse_efficiency_recommendations(json).unwrap();
+        let recommendations = parse_efficiency_recommendations(&json).unwrap();
 
+        assert!(recommendations.daily.is_none());
         assert!(recommendations.intelligence_weighted.is_none());
     }
 
     #[test]
-    fn rejects_efficiency_payloads_without_valid_points() {
-        let json =
-            br#"{"schema":2,"points":[{"model":"","effort":"high","iq":90,"average_price_usd":5}]}"#;
+    fn rejects_efficiency_payloads_without_complete_points() {
+        let json = efficiency_payload(&[FixturePoint {
+            model: "missing-cost",
+            effort: "high",
+            passed_tasks: 10,
+            valid_tasks: 10,
+            cost_usd: None,
+            minutes: Some(10.0),
+            cost_complete: None,
+        }]);
 
         assert_eq!(
-            parse_efficiency_recommendations(json),
-            Err(RadarDataError::InvalidData)
-        );
-    }
-
-    #[test]
-    fn rejects_efficiency_payloads_without_valid_prices() {
-        let json = br#"{
-            "schema": 2,
-            "points": [
-                {"model":"missing","effort":"high","iq":90},
-                {"model":"zero","effort":"high","iq":90,"average_price_usd":0},
-                {"model":"negative","effort":"high","iq":90,"average_price_usd":-1}
-            ]
-        }"#;
-
-        assert_eq!(
-            parse_efficiency_recommendations(json),
+            parse_efficiency_recommendations(&json),
             Err(RadarDataError::InvalidData)
         );
     }

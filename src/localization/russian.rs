@@ -52,7 +52,8 @@ pub(super) const STRINGS: Strings = Strings {
     codex_radar_consent_body: "После включения приложение будет периодически подключаться к CodexRadar для получения рекомендаций сообщества.\r\n\r\nCodex Token, данные об использовании и содержимое проектов не отправляются. Как и при любом запросе к сайту, CodexRadar может видеть обычные сетевые сведения, например IP-адрес и User-Agent.\r\n\r\nВключить CodexRadar?",
     radar_speed_recommendation: "Скорость",
     radar_smart_recommendation: "Интеллект",
-    radar_daily_development: "Рекомендации для повседневной разработки",
+    radar_community_daily: "Ежедневная рекомендация сообщества",
+    radar_daily_recommendation: "Повседневная рекомендация",
     radar_intelligence_weighted: "Приоритет IQ",
     radar_tooltip_header:
         "CodexRadar · Обновлено {age} назад · Неперсонализированная рекомендация сообщества",

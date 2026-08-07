@@ -17,10 +17,11 @@ After enabling it, pause over the Widget content for about 500 ms to see recomme
 | Label | Selection method |
 | --- | --- |
 | Speed / Smart | Shows explicit `speed` / `smart` slots when provided; the legacy `value` recommendation is kept as Speed |
-| Daily development | Shows an untagged `daily_development` list in the supplied order without inferring position semantics |
+| Community daily | Shows an untagged `daily_development` list in the supplied order without inferring position semantics |
+| Daily | Uses the raw efficiency data to keep combinations with IQ ≥ 90 and valid price and duration, then minimizes `relative price ^ 0.7 × relative time ^ 0.3`; credible IQ breaks cost ties |
 | IQ-first | Uses the same candidates and selects by `0.8 × relative IQ score + 0.2 × relative price score`, favoring IQ |
 
-These results come from community data and are not filtered against models available to your account. A recommended combination might therefore be unavailable to you.
+Daily uses task pass rate, average price, and average duration from CodexRadar's raw efficiency endpoint. The tooltip shows raw IQ, while ranking uses the 95% Wilson lower bound as credible IQ to reduce small-sample noise. These results come from community data and are not filtered against models available to your account. A recommended combination might therefore be unavailable to you.
 
 ## Refresh, cache, and failures
 

@@ -196,12 +196,15 @@ mod tests {
             effort: "high".to_string(),
             iq: 95.0,
             average_cost_usd: 5.0,
+            average_minutes: None,
+            passed_tasks: None,
             valid_tasks: 10,
         }
     }
 
     fn computed() -> ComputedRecommendations {
         ComputedRecommendations {
+            daily: Some(recommendation("daily")),
             intelligence_weighted: Some(recommendation("weighted")),
         }
     }
@@ -333,6 +336,34 @@ mod tests {
 
         assert_eq!(radar.speed.unwrap().model, "legacy");
         assert!(radar.smart.is_none());
+    }
+
+    #[test]
+    fn keeps_old_computed_cache_without_inventing_daily_metrics() {
+        let json = br#"{
+            "schema": 1,
+            "computed": {
+                "value": {
+                    "intelligence_weighted": {
+                        "model": "legacy",
+                        "effort": "high",
+                        "iq": 95.0,
+                        "average_cost_usd": 5.0,
+                        "valid_tasks": 10
+                    }
+                },
+                "validated_at_unix": 100
+            }
+        }"#;
+
+        let cache = parse_cache(json, 100).unwrap();
+        let computed = cache.computed.unwrap().value;
+
+        assert!(computed.daily.is_none());
+        assert_eq!(
+            computed.intelligence_weighted.unwrap().average_minutes,
+            None
+        );
     }
 
     #[test]
