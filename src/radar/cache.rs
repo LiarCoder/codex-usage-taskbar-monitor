@@ -211,6 +211,7 @@ mod tests {
         RadarRecommendations {
             speed: Some(recommendation(model)),
             smart: None,
+            daily_development: Vec::new(),
         }
     }
 
@@ -342,6 +343,7 @@ mod tests {
                 value: RadarRecommendations {
                     speed: Some(recommendation("speed")),
                     smart: Some(recommendation("smart")),
+                    daily_development: vec![recommendation("daily")],
                 },
                 validated_at_unix: 100,
                 validator: Some("date".to_string()),
@@ -354,6 +356,7 @@ mod tests {
 
         assert_eq!(parsed.speed.unwrap().model, "speed");
         assert_eq!(parsed.smart.unwrap().model, "smart");
+        assert_eq!(parsed.daily_development[0].model, "daily");
     }
 
     #[test]

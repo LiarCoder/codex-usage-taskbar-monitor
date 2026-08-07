@@ -53,6 +53,7 @@ pub(super) const STRINGS: Strings = Strings {
     codex_radar_consent_body: "启用后，本应用将定期访问 CodexRadar，以获取社区推荐数据。\r\n\r\n请求不会发送 Codex Token、用量数据或项目内容。与普通网站请求一样，CodexRadar 仍可看到 IP 地址、User-Agent 等常规网络信息。\r\n\r\n是否启用 CodexRadar？",
     radar_speed_recommendation: "速度位",
     radar_smart_recommendation: "聪明位",
+    radar_daily_development: "日常开发推荐",
     radar_iq_per_dollar: "IQ/$",
     radar_intelligence_weighted: "偏智力",
     radar_tooltip_header: "CodexRadar · {age}前更新 · 非个性化社区推荐",

@@ -12,11 +12,12 @@ After enabling it, pause over the Widget content for about 500 ms to see recomme
 
 ![CodexRadar recommendation tooltip](../images/codex-radar-recommendation.png)
 
-## Three recommendations
+## Recommendation display
 
 | Label | Selection method |
 | --- | --- |
-| Radar | Uses the `value` recommendation published under CodexRadar's `daily_development` category |
+| Speed / Smart | Shows explicit `speed` / `smart` slots when provided; the legacy `value` recommendation is kept as Speed |
+| Daily development | Shows an untagged `daily_development` list in the supplied order without inferring position semantics |
 | IQ/$ | Among combinations with IQ at least 90 and a positive average price, selects the highest `IQ / average price` |
 | IQ-first | Uses the same candidates and selects by `0.8 × relative IQ score + 0.2 × relative price score`, favoring IQ |
 
