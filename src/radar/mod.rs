@@ -137,9 +137,23 @@ struct RadarRecommendationItem {
     effort: String,
     iq: f64,
     average_cost_usd: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_sample_count")]
     samples: u32,
     slot: Option<String>,
+}
+
+fn deserialize_sample_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 {
+        Ok(value as u32)
+    } else {
+        Err(serde::de::Error::custom(
+            "sample count must be a non-negative whole number",
+        ))
+    }
 }
 
 #[derive(Deserialize)]
@@ -631,6 +645,46 @@ mod tests {
         assert!(recommendations.smart.is_none());
         assert_eq!(recommendations.daily_development.len(), 2);
         assert_eq!(recommendations.daily_development[0].model, "gpt-5.5");
+        assert_eq!(recommendations.daily_development[1].model, "gpt-5.6-luna");
+    }
+
+    #[test]
+    fn accepts_float_encoded_sample_counts_from_current_radar_insights() {
+        let json = br#"{
+            "schema": 1,
+            "recommendations": [{
+                "key": "daily_development",
+                "items": [
+                    {
+                        "model": "gpt-5.6-sol",
+                        "effort": "xhigh",
+                        "iq": 108.93,
+                        "passed": 305.0,
+                        "samples": 420.0,
+                        "average_cost_usd": 6.381834,
+                        "average_duration_minutes": 25.66,
+                        "duration_samples": 334,
+                        "combined_cost_index": 11331.908
+                    },
+                    {
+                        "model": "gpt-5.6-luna",
+                        "effort": "max",
+                        "iq": 93.57,
+                        "passed": 262.0,
+                        "samples": 420.0,
+                        "average_cost_usd": 0.474217,
+                        "average_duration_minutes": 32.43
+                    }
+                ]
+            }]
+        }"#;
+
+        let recommendations = parse_radar_recommendation(json).unwrap();
+
+        assert!(recommendations.speed.is_none());
+        assert!(recommendations.smart.is_none());
+        assert_eq!(recommendations.daily_development.len(), 2);
+        assert_eq!(recommendations.daily_development[0].valid_tasks, 420);
         assert_eq!(recommendations.daily_development[1].model, "gpt-5.6-luna");
     }
 
