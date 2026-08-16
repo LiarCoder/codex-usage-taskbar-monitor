@@ -10,7 +10,7 @@ use super::{
 const RADAR_INSIGHTS_URL: &str = "https://codexradar.com/api/radar-insights";
 const EFFICIENCY_URL: &str = "https://codexradar.com/api/intelligence-efficiency";
 const RADAR_INSIGHTS_MAX_BYTES: usize = 128 * 1024;
-const EFFICIENCY_MAX_BYTES: usize = 4 * 1024 * 1024;
+const EFFICIENCY_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 static HTTP_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
