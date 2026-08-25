@@ -23,6 +23,8 @@ pub const TIMER_RESET_POLL: usize = 3;
 pub const TIMER_UPDATE_CHECK: usize = 4;
 pub const TIMER_RADAR: usize = 5;
 pub const TIMER_RADAR_TOOLTIP: usize = 6;
+pub const TIMER_TRAY_REPOSITION: usize = 7;
+pub const TIMER_TRAY_RECONCILE: usize = 8;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;

@@ -211,6 +211,7 @@ pub(super) fn run() {
         position_at_taskbar();
         if settings.widget_visible {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            start_tray_reconciliation(hwnd);
         }
         diagnose::log("window shown");
 
