@@ -20,7 +20,8 @@ use crate::core::models::UsageDisplayMode;
 use crate::localization::{self, LanguageId, Strings};
 use crate::platform::native::{
     self, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RADAR, TIMER_RADAR_TOOLTIP, TIMER_RESET_POLL,
-    TIMER_UPDATE_CHECK, WM_APP_RADAR_UPDATED, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    TIMER_TRAY_RECONCILE, TIMER_TRAY_REPOSITION, TIMER_UPDATE_CHECK, WM_APP_RADAR_UPDATED,
+    WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::platform::theme;
 use crate::poller;
@@ -66,6 +67,8 @@ const POLL_1_HOUR: u32 = 3_600_000;
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
 const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
+const TRAY_REPOSITION_DELAY_MS: u32 = 100;
+const TRAY_RECONCILE_INTERVAL_MS: u32 = 500;
 
 /// How often the watchdog thread polls for an explorer.exe restart (which
 /// recreates the taskbar and wipes our tray-icon registration).

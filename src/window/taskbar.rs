@@ -164,7 +164,46 @@ pub(super) fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
     true
 }
 
-pub(super) fn position_at_taskbar() {
+pub(super) fn start_tray_reconciliation(hwnd: HWND) {
+    let has_taskbar = {
+        let state = lock_state();
+        state.as_ref().and_then(|s| s.taskbar_hwnd).is_some()
+    };
+    if !has_taskbar {
+        return;
+    }
+
+    unsafe {
+        let _ = SetTimer(hwnd, TIMER_TRAY_RECONCILE, TRAY_RECONCILE_INTERVAL_MS, None);
+    }
+}
+
+pub(super) fn stop_tray_reconciliation(hwnd: HWND) {
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_TRAY_RECONCILE);
+    }
+}
+
+pub(super) fn schedule_tray_reposition() {
+    let hwnd = {
+        let state = lock_state();
+        state.as_ref().and_then(|s| {
+            if s.widget_visible {
+                Some(s.hwnd.to_hwnd())
+            } else {
+                None
+            }
+        })
+    };
+
+    if let Some(hwnd) = hwnd {
+        unsafe {
+            let _ = SetTimer(hwnd, TIMER_TRAY_REPOSITION, TRAY_REPOSITION_DELAY_MS, None);
+        }
+    }
+}
+
+pub(super) fn position_at_taskbar() -> bool {
     refresh_dpi();
     // Drop the app-state lock before any Win32 call that may synchronously
     // re-enter our window procedure.
@@ -172,19 +211,19 @@ pub(super) fn position_at_taskbar() {
         let state = lock_state();
         let s = match state.as_ref() {
             Some(s) => s,
-            None => return,
+            None => return false,
         };
 
         // Don't fight the user's drag
         if s.dragging {
-            return;
+            return false;
         }
 
         let taskbar_hwnd = match s.taskbar_hwnd {
             Some(h) => h,
             None => {
                 diagnose::log("position_at_taskbar skipped: no taskbar handle");
-                return;
+                return false;
             }
         };
 
@@ -195,7 +234,7 @@ pub(super) fn position_at_taskbar() {
         Some(r) => r,
         None => {
             diagnose::log("position_at_taskbar skipped: unable to query taskbar rect");
-            return;
+            return false;
         }
     };
 
@@ -211,43 +250,57 @@ pub(super) fn position_at_taskbar() {
     }
 
     let widget_width = total_widget_width();
-    let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
-    let tray_offset = tray_offset.clamp(0, max_offset);
-    let offset_changed = {
-        let mut state = lock_state();
-        if let Some(s) = state.as_mut() {
-            if s.tray_offset != tray_offset {
-                s.tray_offset = tray_offset;
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    };
-    if offset_changed {
-        save_state_settings();
-    }
+    let tray_offset =
+        effective_tray_offset(tray_left, taskbar_rect.left, widget_width, tray_offset);
 
     let widget_height = sc(WIDGET_HEIGHT);
-    let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
-    if embedded {
+    let widget_y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+    let (x, window_y, target_rect) = if embedded {
         // Child window: coordinates relative to parent (taskbar)
         let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
-        native::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
-        diagnose::log(format!(
-            "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
-            y - taskbar_rect.top
-        ));
+        let window_y = widget_y - taskbar_rect.top;
+        let target_rect = RECT {
+            left: taskbar_rect.left + x,
+            top: taskbar_rect.top + window_y,
+            right: taskbar_rect.left + x + widget_width,
+            bottom: taskbar_rect.top + window_y + widget_height,
+        };
+        (x, window_y, target_rect)
     } else {
         // Topmost popup: screen coordinates
         let x = tray_left - widget_width - tray_offset;
-        native::move_window(hwnd, x, y, widget_width, widget_height);
+        let target_rect = RECT {
+            left: x,
+            top: widget_y,
+            right: x + widget_width,
+            bottom: widget_y + widget_height,
+        };
+        (x, widget_y, target_rect)
+    };
+
+    let needs_move = native::get_window_rect_safe(hwnd)
+        .map(|current| {
+            current.left != target_rect.left
+                || current.top != target_rect.top
+                || current.right != target_rect.right
+                || current.bottom != target_rect.bottom
+        })
+        .unwrap_or(true);
+    if !needs_move {
+        return false;
+    }
+
+    native::move_window(hwnd, x, window_y, widget_width, widget_height);
+    if embedded {
         diagnose::log(format!(
-            "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
+            "positioned embedded widget at x={x} y={window_y} w={widget_width} h={widget_height}"
+        ));
+    } else {
+        diagnose::log(format!(
+            "positioned fallback widget at x={x} y={window_y} w={widget_width} h={widget_height}"
         ));
     }
+    true
 }
 
 /// WinEvent callback for tray icon location changes
@@ -290,8 +343,7 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
             }
         };
         if should_reposition {
-            position_at_taskbar();
-            render_layered();
+            schedule_tray_reposition();
         }
     }
 }

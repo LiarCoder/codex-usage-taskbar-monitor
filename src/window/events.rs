@@ -126,9 +126,26 @@ unsafe fn handle_timer(hwnd: HWND, wparam: WPARAM) -> LRESULT {
         TIMER_RADAR_TOOLTIP => {
             show_radar_tooltip(hwnd);
         }
+        TIMER_TRAY_REPOSITION => {
+            let _ = KillTimer(hwnd, TIMER_TRAY_REPOSITION);
+            reconcile_taskbar_position();
+        }
+        TIMER_TRAY_RECONCILE => {
+            reconcile_taskbar_position();
+        }
         _ => {}
     }
     LRESULT(0)
+}
+
+unsafe fn reconcile_taskbar_position() {
+    let visible = {
+        let state = lock_state();
+        state.as_ref().map(|s| s.widget_visible).unwrap_or(false)
+    };
+    if visible && position_at_taskbar() {
+        render_layered();
+    }
 }
 
 unsafe fn handle_usage_updated(hwnd: HWND) -> LRESULT {
