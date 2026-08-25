@@ -48,6 +48,8 @@ pub(crate) const TEXT_WIDTH: i32 = 80;
 pub(crate) const MODEL_RIGHT_MARGIN: i32 = 3;
 pub(crate) const RIGHT_MARGIN: i32 = 1;
 pub(crate) const WIDGET_HEIGHT: i32 = 46;
+pub(crate) const ROW_VERTICAL_MARGIN: i32 = 7;
+pub(crate) const ROW_GAP: i32 = 6;
 
 pub(crate) fn is_drag_handle_point(client_x: i32, client_y: i32) -> bool {
     let divider_h = sc(25);
