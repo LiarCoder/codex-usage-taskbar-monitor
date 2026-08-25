@@ -34,7 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_prompt_now: "Доступна версия {version}. Обновить сейчас?",
     exit: "Выход",
     show_widget: "Показать виджет",
-    show_5hour_window: "Лимит на 5 часов (устарел)",
+    show_5hour_window: "Лимит на 5 часов",
     show_7day_window: "Лимит на 7 дней",
     no_data: "Нет данных",
     session_window: "5ч",

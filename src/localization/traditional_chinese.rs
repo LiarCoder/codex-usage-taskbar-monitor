@@ -34,7 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_prompt_now: "版本 {version} 已可用。是否立即更新？",
     exit: "結束",
     show_widget: "顯示小工具",
-    show_5hour_window: "5 小時限額（已淘汰）",
+    show_5hour_window: "5 小時限額",
     show_7day_window: "7 天限額",
     no_data: "無資料",
     session_window: "5h",

@@ -34,7 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_prompt_now: "Version {version} is available. Do you want to update now?",
     exit: "Exit",
     show_widget: "Show Widget",
-    show_5hour_window: "5-hour limit (deprecated)",
+    show_5hour_window: "5-hour limit",
     show_7day_window: "7-day limit",
     no_data: "No data",
     session_window: "5h",
