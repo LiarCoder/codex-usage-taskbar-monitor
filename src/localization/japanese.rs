@@ -34,7 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_prompt_now: "バージョン {version} が利用可能です。今すぐ更新しますか？",
     exit: "終了",
     show_widget: "ウィジェットを表示",
-    show_5hour_window: "5時間の上限（非推奨）",
+    show_5hour_window: "5時間の上限",
     show_7day_window: "7日間の上限",
     no_data: "データなし",
     session_window: "5h",

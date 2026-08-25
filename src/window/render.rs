@@ -10,8 +10,8 @@ use crate::platform::native::{self, Color};
 
 use super::layout::{
     refresh_dpi, sc, total_widget_width, BAR_RIGHT_MARGIN, CORNER_RADIUS, DIVIDER_RIGHT_MARGIN,
-    LABEL_RIGHT_MARGIN, LABEL_WIDTH, LEFT_DIVIDER_W, RIGHT_MARGIN, SEGMENT_COUNT, SEGMENT_GAP,
-    SEGMENT_H, SEGMENT_W, TEXT_WIDTH, WIDGET_HEIGHT,
+    LABEL_RIGHT_MARGIN, LABEL_WIDTH, LEFT_DIVIDER_W, RIGHT_MARGIN, ROW_GAP, ROW_VERTICAL_MARGIN,
+    SEGMENT_COUNT, SEGMENT_GAP, SEGMENT_H, SEGMENT_W, TEXT_WIDTH, WIDGET_HEIGHT,
 };
 use super::state::lock_state;
 
@@ -100,8 +100,8 @@ pub(crate) fn paint_content(
         let _ = DeleteObject(right_brush);
 
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row2_y = height - sc(5) - sc(SEGMENT_H);
-        let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+        let row2_y = height - sc(ROW_VERTICAL_MARGIN) - sc(SEGMENT_H);
+        let row1_y = row2_y - sc(ROW_GAP) - sc(SEGMENT_H);
 
         let _ = SetBkMode(ctx.hdc, TRANSPARENT);
         let _ = SetTextColor(ctx.hdc, COLORREF(ctx.text_color.to_colorref()));

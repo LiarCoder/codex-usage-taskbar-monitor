@@ -34,7 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_prompt_now: "버전 {version}을 사용할 수 있습니다. 지금 업데이트하시겠습니까?",
     exit: "종료",
     show_widget: "위젯 표시",
-    show_5hour_window: "5시간 한도(사용 중단 예정)",
+    show_5hour_window: "5시간 한도",
     show_7day_window: "7일 한도",
     no_data: "데이터 없음",
     session_window: "5시간",

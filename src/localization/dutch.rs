@@ -34,7 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_prompt_now: "Versie {version} is beschikbaar. Wil je nu bijwerken?",
     exit: "Afsluiten",
     show_widget: "Widget tonen",
-    show_5hour_window: "Limiet van 5 uur (verouderd)",
+    show_5hour_window: "Limiet van 5 uur",
     show_7day_window: "Limiet van 7 dagen",
     no_data: "Geen gegevens",
     session_window: "5u",
