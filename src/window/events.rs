@@ -548,6 +548,9 @@ unsafe fn handle_command(hwnd: HWND, wparam: WPARAM) -> LRESULT {
         IDM_CODEX_RADAR_WEBSITE => {
             open_codex_radar_website(hwnd);
         }
+        IDM_GITHUB_WEBSITE => {
+            open_github_website(hwnd);
+        }
         IDM_LANG_SYSTEM
         | IDM_LANG_ENGLISH
         | IDM_LANG_DUTCH
@@ -645,8 +648,16 @@ unsafe fn toggle_codex_radar(hwnd: HWND) {
 }
 
 unsafe fn open_codex_radar_website(hwnd: HWND) {
+    open_website(hwnd, "https://codexradar.com/", "CodexRadar");
+}
+
+unsafe fn open_github_website(hwnd: HWND) {
+    open_website(hwnd, env!("CARGO_PKG_REPOSITORY"), "GitHub");
+}
+
+unsafe fn open_website(hwnd: HWND, url: &str, description: &str) {
     let operation = native::wide_str("open");
-    let website = native::wide_str("https://codexradar.com/");
+    let website = native::wide_str(url);
     let result = ShellExecuteW(
         hwnd,
         PCWSTR::from_raw(operation.as_ptr()),
@@ -657,7 +668,7 @@ unsafe fn open_codex_radar_website(hwnd: HWND) {
     );
     if result.0 as usize <= 32 {
         diagnose::log(format!(
-            "unable to open CodexRadar website: ShellExecuteW returned {}",
+            "unable to open {description} website: ShellExecuteW returned {}",
             result.0 as usize
         ));
     }

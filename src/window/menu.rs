@@ -44,6 +44,7 @@ pub(crate) const IDM_USAGE_DISPLAY_REMAINING: u16 = 81;
 pub(crate) const IDM_CODEX_RADAR_ENABLED: u16 = 90;
 pub(crate) const IDM_CODEX_RADAR_REFRESH: u16 = 91;
 pub(crate) const IDM_CODEX_RADAR_WEBSITE: u16 = 92;
+pub(crate) const IDM_GITHUB_WEBSITE: u16 = 93;
 
 fn radar_manual_refresh_available(
     enabled: bool,
@@ -414,6 +415,14 @@ pub(super) fn show_context_menu(hwnd: HWND) {
             version_flags,
             IDM_VERSION_ACTION as usize,
             PCWSTR::from_raw(version_str.as_ptr()),
+        );
+
+        let github_label = native::wide_str("GitHub");
+        let _ = AppendMenuW(
+            settings_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_GITHUB_WEBSITE as usize,
+            PCWSTR::from_raw(github_label.as_ptr()),
         );
 
         let settings_label = native::wide_str(strings.settings);
