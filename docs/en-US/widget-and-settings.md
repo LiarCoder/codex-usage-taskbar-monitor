@@ -25,6 +25,7 @@ The position, target taskbar, and visibility state are saved in settings. Use **
 | Compact Mode | Hides the segmented percentage bar and reduces Widget width |
 | Start with Windows | Adds or removes the current-user Windows startup entry |
 | Language | Follows the system language or uses a selected built-in language |
+| GitHub | Opens the project's GitHub repository |
 | Show Widget | Toggles the taskbar Widget without exiting the application |
 
 The application follows the Windows light or dark theme and DPI. It repositions and rerenders after display, DPI, system-theme, or Explorer state changes.
