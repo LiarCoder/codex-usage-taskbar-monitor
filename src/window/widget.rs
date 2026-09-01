@@ -65,11 +65,11 @@ fn tray_icon_data_from_state() -> Option<tray::TrayIconData> {
                 ),
                 None => (None, None),
             };
-            let tooltip = if tooltip_windows.is_empty() {
-                format!("{}: {}", strings.codex_model, strings.no_data)
-            } else {
-                format!("{} {}", strings.codex_model, tooltip_windows.join(" | "))
-            };
+            let tooltip = format_tray_tooltip(
+                strings.codex_model,
+                strings.no_data,
+                tooltip_windows.as_slice(),
+            );
 
             Some(tray::TrayIconData {
                 used_percent,
@@ -83,6 +83,14 @@ fn tray_icon_data_from_state() -> Option<tray::TrayIconData> {
             tooltip: s.language.strings().window_title.to_string(),
         }),
         None => None,
+    }
+}
+
+fn format_tray_tooltip(codex_model: &str, no_data: &str, windows: &[String]) -> String {
+    if windows.is_empty() {
+        format!("{codex_model}: {no_data}")
+    } else {
+        windows.join("\r\n")
     }
 }
 
@@ -147,5 +155,35 @@ pub(super) fn toggle_widget_visibility(hwnd: HWND) {
             pop_radar_tooltip();
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_tray_tooltip;
+
+    #[test]
+    fn formats_multiple_usage_windows_on_separate_lines_without_model_prefix() {
+        let windows = vec!["5h: 83%".to_string(), "7d: 97%".to_string()];
+
+        assert_eq!(
+            format_tray_tooltip("Codex", "No data", &windows),
+            "5h: 83%\r\n7d: 97%"
+        );
+    }
+
+    #[test]
+    fn formats_single_usage_window_without_a_trailing_line_break() {
+        let windows = vec!["5h: 83%".to_string()];
+
+        assert_eq!(format_tray_tooltip("Codex", "No data", &windows), "5h: 83%");
+    }
+
+    #[test]
+    fn preserves_model_name_for_the_no_data_state() {
+        assert_eq!(
+            format_tray_tooltip("Codex", "No data", &[]),
+            "Codex: No data"
+        );
     }
 }
