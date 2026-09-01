@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use windows::Win32::UI::Controls::{
     InitCommonControlsEx, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, TOOLTIPS_CLASSW, TTF_ABSOLUTE,
@@ -428,60 +428,11 @@ fn centered_tooltip_position(
 }
 
 fn widget_tooltip_available(app_state: &AppState) -> bool {
-    app_state.codex_radar_enabled || has_usage_reset_time(app_state)
-}
-
-fn has_usage_reset_time(app_state: &AppState) -> bool {
-    if !app_state.last_poll_ok {
-        return false;
-    }
-    let Some(data) = app_state.data.as_ref() else {
-        return false;
-    };
-    app_state.show_5hour_window
-        && data
-            .session
-            .as_ref()
-            .is_some_and(|section| section.resets_at.is_some())
+    app_state.codex_radar_enabled
 }
 
 fn format_widget_tooltip(app_state: &AppState, now_unix: u64) -> String {
-    let usage = format_usage_reset_lines(app_state);
-    let mut sections = Vec::new();
-    if !usage.is_empty() {
-        sections.push(usage.join("\r\n"));
-    }
-    let radar = format_radar_tooltip(app_state, now_unix);
-    if !radar.is_empty() {
-        sections.push(radar);
-    }
-    sections.join("\r\n\r\n")
-}
-
-fn format_usage_reset_lines(app_state: &AppState) -> Vec<String> {
-    if !app_state.last_poll_ok {
-        return Vec::new();
-    }
-    let Some(data) = app_state.data.as_ref() else {
-        return Vec::new();
-    };
-    let strings = app_state.language.strings();
-    let mut lines = Vec::new();
-    if app_state.show_5hour_window {
-        if let Some(line) = data
-            .session
-            .as_ref()
-            .and_then(|section| format_usage_reset_line(strings.session_window, section.resets_at))
-        {
-            lines.push(line);
-        }
-    }
-    lines
-}
-
-fn format_usage_reset_line(window: &str, resets_at: Option<SystemTime>) -> Option<String> {
-    let reset_time = native::format_local_date_time(resets_at?)?;
-    Some(format!("{window} → {reset_time}"))
+    format_radar_tooltip(app_state, now_unix)
 }
 
 fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
@@ -802,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn shows_5hour_reset_time_without_requiring_codex_radar() {
+    fn does_not_show_tooltip_when_codex_radar_is_disabled() {
         let mut app_state = state(
             LanguageId::English,
             RadarStatus::Disabled,
@@ -815,32 +766,6 @@ mod tests {
                 percentage: 42.0,
                 resets_at: Some(std::time::UNIX_EPOCH + Duration::from_secs(1_785_900_000)),
             }),
-            weekly: Some(crate::core::models::UsageSection {
-                percentage: 98.0,
-                resets_at: Some(std::time::UNIX_EPOCH + Duration::from_secs(1_785_917_790)),
-            }),
-            ..Default::default()
-        });
-
-        let text = format_widget_tooltip(&app_state, 0);
-
-        assert!(widget_tooltip_available(&app_state));
-        assert!(text.starts_with("5h → "));
-        assert!(!text.contains("7d → "));
-        assert!(!text.contains("CodexRadar"));
-    }
-
-    #[test]
-    fn does_not_show_tooltip_for_weekly_reset_time_alone() {
-        let mut app_state = state(
-            LanguageId::English,
-            RadarStatus::Disabled,
-            crate::radar::RadarCache::default(),
-        );
-        app_state.codex_radar_enabled = false;
-        app_state.last_poll_ok = true;
-        app_state.show_5hour_window = false;
-        app_state.data = Some(crate::core::models::UsageData {
             weekly: Some(crate::core::models::UsageSection {
                 percentage: 98.0,
                 resets_at: Some(std::time::UNIX_EPOCH + Duration::from_secs(1_785_917_790)),
