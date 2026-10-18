@@ -50,16 +50,14 @@ pub(super) const STRINGS: Strings = Strings {
     view_codex_radar_website: "Ver sitio web",
     codex_radar_consent_title: "¿Activar CodexRadar?",
     codex_radar_consent_body: "Al activarlo, esta aplicación se conectará periódicamente a CodexRadar para obtener recomendaciones de la comunidad.\r\n\r\nNo envía tu Codex Token, datos de uso ni contenido de proyectos. Como en cualquier solicitud a un sitio web, CodexRadar puede ver información de red habitual, como tu dirección IP y el User-Agent.\r\n\r\n¿Activar CodexRadar?",
-    radar_speed_recommendation: "Velocidad",
-    radar_smart_recommendation: "Inteligencia",
-    radar_community_daily: "Recomendación diaria de la comunidad",
     radar_daily_recommendation: "Recomendación diaria",
     radar_hard_problem: "Problema difícil",
     radar_tooltip_header:
         "CodexRadar · Haz triple clic en el widget de la barra de tareas para abrir el sitio web\r\nActualizado hace {age}\r\nPróxima actualización: {next_update}",
     radar_cached_warning: "Datos en caché, pueden estar desactualizados",
     radar_loading: "Obteniendo recomendaciones de CodexRadar...",
-    radar_data_unavailable: "Datos temporalmente no disponibles",
     radar_fetch_error: "No se pudieron obtener las recomendaciones de CodexRadar",
     radar_no_eligible: "No hay combinaciones con IQ ≥ 90",
+    radar_bench_metrics: "Puntuación radar {score} · Equivalente API medio ${cost}",
+    radar_bench_no_eligible: "No hay combinaciones completamente evaluadas con puntuación radar ≥ 90",
 };

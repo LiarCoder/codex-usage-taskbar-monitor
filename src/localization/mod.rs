@@ -197,17 +197,15 @@ pub struct Strings {
     pub view_codex_radar_website: &'static str,
     pub codex_radar_consent_title: &'static str,
     pub codex_radar_consent_body: &'static str,
-    pub radar_speed_recommendation: &'static str,
-    pub radar_smart_recommendation: &'static str,
-    pub radar_community_daily: &'static str,
     pub radar_daily_recommendation: &'static str,
     pub radar_hard_problem: &'static str,
     pub radar_tooltip_header: &'static str,
     pub radar_cached_warning: &'static str,
     pub radar_loading: &'static str,
-    pub radar_data_unavailable: &'static str,
     pub radar_fetch_error: &'static str,
     pub radar_no_eligible: &'static str,
+    pub radar_bench_metrics: &'static str,
+    pub radar_bench_no_eligible: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {
