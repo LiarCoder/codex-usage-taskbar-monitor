@@ -2,12 +2,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-    ComputedRecommendations, FetchValidators, RadarRecommendations, RadarRefreshResult,
-    SourceUpdate,
-};
+use super::{ComputedRecommendations, FetchValidators, SourceUpdate};
 
-const CACHE_SCHEMA: u32 = 1;
+const CACHE_SCHEMA: u32 = 2;
 pub(crate) const CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 pub(crate) const FULL_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
 pub(crate) const MANUAL_REFRESH_COOLDOWN_SECS: u64 = 60;
@@ -26,8 +23,6 @@ pub(crate) struct CachedSource<T> {
 pub(crate) struct RadarCache {
     schema: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) radar: Option<CachedSource<RadarRecommendations>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) computed: Option<CachedSource<ComputedRecommendations>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) last_attempt_unix: Option<u64>,
@@ -43,7 +38,6 @@ impl Default for RadarCache {
     fn default() -> Self {
         Self {
             schema: CACHE_SCHEMA,
-            radar: None,
             computed: None,
             last_attempt_unix: None,
             last_complete_success_unix: None,
@@ -55,15 +49,11 @@ impl Default for RadarCache {
 
 impl RadarCache {
     pub(crate) fn has_any_data(&self) -> bool {
-        self.radar.is_some() || self.computed.is_some()
+        self.computed.is_some()
     }
 
     pub(crate) fn validators(&self) -> FetchValidators {
         FetchValidators {
-            radar_last_modified: self
-                .radar
-                .as_ref()
-                .and_then(|source| source.validator.clone()),
             efficiency_etag: self
                 .computed
                 .as_ref()
@@ -72,11 +62,6 @@ impl RadarCache {
     }
 
     pub(crate) fn prune_stale(&mut self, now_unix: u64) {
-        if self.radar.as_ref().is_some_and(|source| {
-            now_unix.saturating_sub(source.validated_at_unix) > CACHE_MAX_AGE_SECS
-        }) {
-            self.radar = None;
-        }
         if self.computed.as_ref().is_some_and(|source| {
             now_unix.saturating_sub(source.validated_at_unix) > CACHE_MAX_AGE_SECS
         }) {
@@ -105,12 +90,10 @@ pub(crate) fn save_cache(cache: &RadarCache) {
 
 pub(crate) fn apply_refresh(
     cache: &mut RadarCache,
-    refresh: RadarRefreshResult,
+    refresh: SourceUpdate<ComputedRecommendations>,
     now_unix: u64,
 ) -> bool {
-    let radar_succeeded = apply_source(&mut cache.radar, refresh.radar, now_unix);
-    let computed_succeeded = apply_source(&mut cache.computed, refresh.computed, now_unix);
-    let complete = radar_succeeded && computed_succeeded;
+    let complete = apply_source(&mut cache.computed, refresh, now_unix);
 
     cache.last_attempt_unix = Some(now_unix);
     cache.last_refresh_complete = complete;
@@ -140,7 +123,13 @@ pub(crate) fn next_due_in_secs(cache: &RadarCache, now_unix: u64) -> u64 {
 
 fn parse_cache(bytes: &[u8], now_unix: u64) -> Option<RadarCache> {
     let mut cache: RadarCache = serde_json::from_slice(bytes).ok()?;
-    if cache.schema != CACHE_SCHEMA {
+    if cache.schema == 1 {
+        cache.schema = CACHE_SCHEMA;
+        cache.last_attempt_unix = None;
+        cache.last_complete_success_unix = None;
+        cache.retry_count = 0;
+        cache.last_refresh_complete = false;
+    } else if cache.schema != CACHE_SCHEMA {
         return None;
     }
     cache.prune_stale(now_unix);
@@ -206,35 +195,25 @@ mod tests {
         ComputedRecommendations {
             daily: Some(recommendation("daily")),
             hard_problem: Some(recommendation("weighted")),
-        }
-    }
-
-    fn radar_recommendations(model: &str) -> RadarRecommendations {
-        RadarRecommendations {
-            speed: Some(recommendation(model)),
-            smart: None,
-            daily_development: Vec::new(),
+            radar_bench: false,
         }
     }
 
     #[test]
-    fn refreshes_sources_independently_and_marks_partial_failures() {
-        let mut cache = RadarCache::default();
-        let complete = apply_refresh(
-            &mut cache,
-            RadarRefreshResult {
-                radar: SourceUpdate::Updated {
-                    value: radar_recommendations("radar"),
-                    validator: Some("date".to_string()),
-                },
-                computed: SourceUpdate::Failed("offline".to_string()),
-            },
-            100,
-        );
+    fn preserves_recommendations_when_refresh_fails() {
+        let mut cache = RadarCache {
+            computed: Some(CachedSource {
+                value: computed(),
+                validated_at_unix: 10,
+                validator: None,
+            }),
+            ..RadarCache::default()
+        };
+        let complete = apply_refresh(&mut cache, SourceUpdate::Failed("offline".to_string()), 100);
 
         assert!(!complete);
-        assert_eq!(cache.radar.unwrap().value.speed.unwrap().model, "radar");
-        assert!(cache.computed.is_none());
+        assert_eq!(cache.computed.as_ref().unwrap().value, computed());
+        assert_eq!(cache.computed.as_ref().unwrap().validated_at_unix, 10);
         assert_eq!(cache.retry_count, 1);
         assert!(!cache.last_refresh_complete);
     }
@@ -242,11 +221,6 @@ mod tests {
     #[test]
     fn not_modified_refreshes_existing_cache_age() {
         let mut cache = RadarCache {
-            radar: Some(CachedSource {
-                value: radar_recommendations("radar"),
-                validated_at_unix: 10,
-                validator: Some("date".to_string()),
-            }),
             computed: Some(CachedSource {
                 value: computed(),
                 validated_at_unix: 10,
@@ -255,17 +229,9 @@ mod tests {
             ..RadarCache::default()
         };
 
-        let complete = apply_refresh(
-            &mut cache,
-            RadarRefreshResult {
-                radar: SourceUpdate::NotModified,
-                computed: SourceUpdate::NotModified,
-            },
-            100,
-        );
+        let complete = apply_refresh(&mut cache, SourceUpdate::NotModified, 100);
 
         assert!(complete);
-        assert_eq!(cache.radar.unwrap().validated_at_unix, 100);
         assert_eq!(cache.computed.unwrap().validated_at_unix, 100);
         assert_eq!(cache.retry_count, 0);
     }
@@ -274,14 +240,7 @@ mod tests {
     fn not_modified_without_cache_is_a_failure() {
         let mut cache = RadarCache::default();
 
-        let complete = apply_refresh(
-            &mut cache,
-            RadarRefreshResult {
-                radar: SourceUpdate::NotModified,
-                computed: SourceUpdate::NotModified,
-            },
-            100,
-        );
+        let complete = apply_refresh(&mut cache, SourceUpdate::NotModified, 100);
 
         assert!(!complete);
         assert_eq!(cache.retry_count, 1);
@@ -290,11 +249,6 @@ mod tests {
     #[test]
     fn expires_cached_sources_after_twenty_four_hours() {
         let mut cache = RadarCache {
-            radar: Some(CachedSource {
-                value: radar_recommendations("radar"),
-                validated_at_unix: 100,
-                validator: None,
-            }),
             computed: Some(CachedSource {
                 value: computed(),
                 validated_at_unix: 101,
@@ -305,37 +259,36 @@ mod tests {
 
         cache.prune_stale(100 + CACHE_MAX_AGE_SECS + 1);
 
-        assert!(cache.radar.is_none());
         assert!(cache.computed.is_some());
+        cache.prune_stale(101 + CACHE_MAX_AGE_SECS + 1);
+        assert!(cache.computed.is_none());
     }
 
     #[test]
     fn ignores_corrupt_and_unknown_cache_schemas() {
         assert!(parse_cache(b"not json", 100).is_none());
-        assert!(parse_cache(br#"{"schema":2}"#, 100).is_none());
+        assert!(parse_cache(br#"{"schema":3}"#, 100).is_none());
     }
 
     #[test]
-    fn migrates_legacy_radar_recommendation_to_speed_slot() {
-        let json = br#"{
+    fn migrates_legacy_cache_and_clears_site_failure_backoff() {
+        let json = serde_json::to_vec(&serde_json::json!({
             "schema": 1,
-            "radar": {
-                "value": {
-                    "model": "legacy",
-                    "effort": "high",
-                    "iq": 95.0,
-                    "average_cost_usd": 5.0,
-                    "valid_tasks": 10
-                },
-                "validated_at_unix": 100
-            }
-        }"#;
+            "radar": { "value": { "speed": recommendation("site") }, "validated_at_unix": 100 },
+            "computed": { "value": computed(), "validated_at_unix": 100 },
+            "last_attempt_unix": 100,
+            "retry_count": 37,
+            "last_refresh_complete": false
+        }))
+        .unwrap();
 
-        let cache = parse_cache(json, 100).unwrap();
-        let radar = cache.radar.unwrap().value;
+        let cache = parse_cache(&json, 101).unwrap();
 
-        assert_eq!(radar.speed.unwrap().model, "legacy");
-        assert!(radar.smart.is_none());
+        assert_eq!(cache.schema, CACHE_SCHEMA);
+        assert_eq!(cache.computed.as_ref().unwrap().value, computed());
+        assert_eq!(cache.retry_count, 0);
+        assert_eq!(next_due_in_secs(&cache, 101), 0);
+        assert!(serde_json::to_value(&cache).unwrap().get("radar").is_none());
     }
 
     #[test]
@@ -364,14 +317,10 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_current_radar_cache() {
+    fn round_trips_current_recommendation_cache() {
         let cache = RadarCache {
-            radar: Some(CachedSource {
-                value: RadarRecommendations {
-                    speed: Some(recommendation("speed")),
-                    smart: Some(recommendation("smart")),
-                    daily_development: vec![recommendation("daily")],
-                },
+            computed: Some(CachedSource {
+                value: computed(),
                 validated_at_unix: 100,
                 validator: Some("date".to_string()),
             }),
@@ -379,11 +328,9 @@ mod tests {
         };
 
         let json = serde_json::to_vec(&cache).unwrap();
-        let parsed = parse_cache(&json, 100).unwrap().radar.unwrap().value;
+        let parsed = parse_cache(&json, 100).unwrap().computed.unwrap().value;
 
-        assert_eq!(parsed.speed.unwrap().model, "speed");
-        assert_eq!(parsed.smart.unwrap().model, "smart");
-        assert_eq!(parsed.daily_development[0].model, "daily");
+        assert_eq!(parsed, computed());
     }
 
     #[test]

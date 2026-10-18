@@ -2,21 +2,15 @@ use std::io::Read;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::{
-    parse_efficiency_recommendations, parse_radar_recommendation, ComputedRecommendations,
-    RadarRecommendations,
-};
+use super::{parse_efficiency_recommendations, ComputedRecommendations};
 
-const RADAR_INSIGHTS_URL: &str = "https://codexradar.com/api/radar-insights";
 const EFFICIENCY_URL: &str = "https://codexradar.com/api/intelligence-efficiency";
-const RADAR_INSIGHTS_MAX_BYTES: usize = 128 * 1024;
 const EFFICIENCY_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 static HTTP_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FetchValidators {
-    pub(crate) radar_last_modified: Option<String>,
     pub(crate) efficiency_etag: Option<String>,
 }
 
@@ -36,26 +30,27 @@ impl<T> SourceUpdate<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct RadarRefreshResult {
-    pub(crate) radar: SourceUpdate<RadarRecommendations>,
-    pub(crate) computed: SourceUpdate<ComputedRecommendations>,
-}
-
-pub(crate) fn fetch_recommendations(validators: &FetchValidators) -> RadarRefreshResult {
+pub(crate) fn fetch_recommendations(
+    validators: &FetchValidators,
+) -> SourceUpdate<ComputedRecommendations> {
     let agent = match build_agent() {
         Ok(agent) => agent,
-        Err(message) => {
-            return RadarRefreshResult {
-                radar: SourceUpdate::Failed(message.clone()),
-                computed: SourceUpdate::Failed(message),
-            }
-        }
+        Err(message) => return SourceUpdate::Failed(message),
     };
 
-    RadarRefreshResult {
-        radar: fetch_radar_recommendation(agent, validators.radar_last_modified.as_deref()),
-        computed: fetch_computed_recommendations(agent, validators.efficiency_etag.as_deref()),
+    match super::bench::fetch_recommendations(agent) {
+        Ok(value) => SourceUpdate::Updated {
+            value,
+            validator: None,
+        },
+        Err(bench_error) => {
+            let mut update =
+                fetch_computed_recommendations(agent, validators.efficiency_etag.as_deref());
+            if let SourceUpdate::Failed(error) = &mut update {
+                *error = format!("RadarBench unavailable: {bench_error}; {error}");
+            }
+            update
+        }
     }
 }
 
@@ -75,25 +70,6 @@ fn build_agent() -> Result<&'static ureq::Agent, String> {
     HTTP_AGENT
         .get()
         .ok_or_else(|| "unable to initialize HTTP agent".to_string())
-}
-
-fn fetch_radar_recommendation(
-    agent: &ureq::Agent,
-    last_modified: Option<&str>,
-) -> SourceUpdate<RadarRecommendations> {
-    let mut request = base_request(agent, RADAR_INSIGHTS_URL);
-    if let Some(last_modified) = last_modified {
-        request = request.set("If-Modified-Since", last_modified);
-    }
-
-    match call(request, RADAR_INSIGHTS_MAX_BYTES, "Last-Modified") {
-        Ok(HttpResponse::NotModified) => SourceUpdate::NotModified,
-        Ok(HttpResponse::Body { bytes, validator }) => match parse_radar_recommendation(&bytes) {
-            Ok(value) => SourceUpdate::Updated { value, validator },
-            Err(error) => SourceUpdate::Failed(format!("unable to parse radar insights: {error}")),
-        },
-        Err(message) => SourceUpdate::Failed(format!("radar insights request failed: {message}")),
-    }
 }
 
 fn fetch_computed_recommendations(
@@ -119,14 +95,14 @@ fn fetch_computed_recommendations(
     }
 }
 
-fn base_request(agent: &ureq::Agent, url: &str) -> ureq::Request {
+pub(super) fn base_request(agent: &ureq::Agent, url: &str) -> ureq::Request {
     agent.get(url).set(
         "User-Agent",
         concat!("codex-usage-taskbar-monitor/", env!("CARGO_PKG_VERSION")),
     )
 }
 
-enum HttpResponse {
+pub(super) enum HttpResponse {
     NotModified,
     Body {
         bytes: Vec<u8>,
@@ -134,12 +110,13 @@ enum HttpResponse {
     },
 }
 
-fn call(
+pub(super) fn call(
     request: ureq::Request,
     maximum_bytes: usize,
     validator_header: &str,
 ) -> Result<HttpResponse, String> {
     let response = match request.call() {
+        Ok(response) if response.status() == 304 => return Ok(HttpResponse::NotModified),
         Ok(response) => response,
         Err(ureq::Error::Status(304, _)) => return Ok(HttpResponse::NotModified),
         Err(ureq::Error::Status(code, _)) => return Err(format!("HTTP {code}")),

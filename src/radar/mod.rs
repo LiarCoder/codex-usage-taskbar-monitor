@@ -2,8 +2,9 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
+mod bench;
 mod cache;
 mod client;
 
@@ -13,10 +14,9 @@ pub(crate) use cache::{
     apply_refresh, load_cache, next_due_in_secs, save_cache, RadarCache,
     MANUAL_REFRESH_COOLDOWN_SECS,
 };
-pub(crate) use client::{fetch_recommendations, FetchValidators, RadarRefreshResult, SourceUpdate};
+pub(crate) use client::{fetch_recommendations, FetchValidators, SourceUpdate};
 
 pub(crate) const MIN_RECOMMENDED_IQ: f64 = 90.0;
-const RADAR_INSIGHTS_SCHEMA: u32 = 1;
 const EFFICIENCY_SCHEMA: u32 = 1;
 const MAX_LABEL_CHARS: usize = 64;
 const DAILY_PRICE_WEIGHT: f64 = 0.7;
@@ -43,60 +43,14 @@ pub(crate) struct Recommendation {
     pub(crate) valid_tasks: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub(crate) struct RadarRecommendations {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) speed: Option<Recommendation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) smart: Option<Recommendation>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) daily_development: Vec<Recommendation>,
-}
-
-impl<'de> Deserialize<'de> for RadarRecommendations {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum WireFormat {
-            Legacy(Recommendation),
-            Current {
-                #[serde(default)]
-                speed: Option<Recommendation>,
-                #[serde(default)]
-                smart: Option<Recommendation>,
-                #[serde(default)]
-                daily_development: Vec<Recommendation>,
-            },
-        }
-
-        Ok(match WireFormat::deserialize(deserializer)? {
-            WireFormat::Legacy(recommendation) => Self {
-                speed: Some(recommendation),
-                smart: None,
-                daily_development: Vec::new(),
-            },
-            WireFormat::Current {
-                speed,
-                smart,
-                daily_development,
-            } => Self {
-                speed,
-                smart,
-                daily_development,
-            },
-        })
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ComputedRecommendations {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) daily: Option<Recommendation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) hard_problem: Option<Recommendation>,
+    #[serde(default)]
+    pub(crate) radar_bench: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,7 +58,6 @@ pub(crate) enum RadarDataError {
     InvalidJson,
     UnsupportedSchema,
     InvalidData,
-    RecommendationUnavailable,
 }
 
 impl fmt::Display for RadarDataError {
@@ -113,46 +66,8 @@ impl fmt::Display for RadarDataError {
             Self::InvalidJson => "invalid JSON",
             Self::UnsupportedSchema => "unsupported schema",
             Self::InvalidData => "invalid recommendation data",
-            Self::RecommendationUnavailable => "recommendation unavailable",
         };
         formatter.write_str(message)
-    }
-}
-
-#[derive(Deserialize)]
-struct RadarInsightsResponse {
-    schema: u32,
-    recommendations: Vec<RadarRecommendationGroup>,
-}
-
-#[derive(Deserialize)]
-struct RadarRecommendationGroup {
-    key: String,
-    items: Vec<RadarRecommendationItem>,
-}
-
-#[derive(Deserialize)]
-struct RadarRecommendationItem {
-    model: String,
-    effort: String,
-    iq: f64,
-    average_cost_usd: f64,
-    #[serde(default, deserialize_with = "deserialize_sample_count")]
-    samples: u32,
-    slot: Option<String>,
-}
-
-fn deserialize_sample_count<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = f64::deserialize(deserializer)?;
-    if value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 {
-        Ok(value as u32)
-    } else {
-        Err(serde::de::Error::custom(
-            "sample count must be a non-negative whole number",
-        ))
     }
 }
 
@@ -187,64 +102,6 @@ struct EfficiencyRun {
     duration_sec: Option<f64>,
     actual_cost_usd: Option<f64>,
     cost_complete: Option<bool>,
-}
-
-pub(crate) fn parse_radar_recommendation(
-    json: &[u8],
-) -> Result<RadarRecommendations, RadarDataError> {
-    let response: RadarInsightsResponse =
-        serde_json::from_slice(json).map_err(|_| RadarDataError::InvalidJson)?;
-    if response.schema != RADAR_INSIGHTS_SCHEMA {
-        return Err(RadarDataError::UnsupportedSchema);
-    }
-
-    let items = response
-        .recommendations
-        .into_iter()
-        .find(|group| group.key == "daily_development")
-        .map(|group| group.items)
-        .ok_or(RadarDataError::RecommendationUnavailable)?;
-
-    let mut speed = None;
-    let mut smart = None;
-    let mut legacy_value = None;
-    let mut daily_development = Vec::new();
-    let parse_item = |item: RadarRecommendationItem| {
-        recommendation_from_parts(
-            item.model,
-            item.effort,
-            item.iq,
-            item.average_cost_usd,
-            item.samples,
-        )
-        .ok_or(RadarDataError::InvalidData)
-    };
-    for item in items {
-        let destination = match item.slot.as_deref() {
-            Some("speed") if speed.is_none() => &mut speed,
-            Some("smart") if smart.is_none() => &mut smart,
-            Some("value") if legacy_value.is_none() => &mut legacy_value,
-            None => {
-                daily_development.push(parse_item(item)?);
-                continue;
-            }
-            _ => continue,
-        };
-        *destination = Some(parse_item(item)?);
-    }
-
-    if speed.is_none() {
-        speed = legacy_value;
-    }
-    if speed.is_none() && smart.is_none() && daily_development.is_empty() {
-        return Err(RadarDataError::RecommendationUnavailable);
-    }
-
-    Ok(RadarRecommendations {
-        speed,
-        smart,
-        daily_development,
-    })
 }
 
 pub(crate) fn parse_efficiency_recommendations(
@@ -374,6 +231,10 @@ fn aggregate_efficiency_point(
 
 pub(crate) fn model_display_name(model: &str) -> String {
     match model {
+        "gpt-6-astra" => "GPT-6 Astra".to_string(),
+        "gpt-6.1-sol" => "GPT-6.1 Sol".to_string(),
+        "gpt-6-sol" => "GPT-6 Sol".to_string(),
+        "gpt-6-luna" => "GPT-6 Luna".to_string(),
         "gpt-5.6-sol" => "Sol".to_string(),
         "gpt-5.6-terra" => "Terra".to_string(),
         "gpt-5.6-luna" => "Luna".to_string(),
@@ -418,12 +279,14 @@ fn rank_candidates(candidates: &[Recommendation]) -> ComputedRecommendations {
         return ComputedRecommendations {
             daily: None,
             hard_problem: None,
+            radar_bench: false,
         };
     }
 
     ComputedRecommendations {
         daily: select_daily(candidates),
         hard_problem: select_hard(candidates),
+        radar_bench: false,
     }
 }
 
@@ -564,190 +427,6 @@ fn credible_iq(candidate: &Recommendation) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn selects_current_daily_development_recommendations() {
-        let json = br#"{
-            "schema": 1,
-            "extra": true,
-            "recommendations": [
-                {
-                    "key": "hard_problems",
-                    "items": [{
-                        "model": "gpt-5.6-sol",
-                        "effort": "max",
-                        "iq": 103.1,
-                        "average_cost_usd": 9.04,
-                        "slot": "value"
-                    }]
-                },
-                {
-                    "key": "daily_development",
-                    "items": [
-                        {
-                            "model": "gpt-5.6-sol",
-                            "effort": "medium",
-                            "iq": 91.07,
-                            "average_cost_usd": 3.742,
-                            "samples": 112,
-                            "slot": "speed",
-                            "ignored": "field"
-                        },
-                        {
-                            "model": "gpt-5.6-sol",
-                            "effort": "xhigh",
-                            "iq": 105.8,
-                            "average_cost_usd": 6.19,
-                            "slot": "smart"
-                        }
-                    ]
-                }
-            ]
-        }"#;
-
-        let recommendations = parse_radar_recommendation(json).unwrap();
-
-        let speed = recommendations.speed.unwrap();
-        assert_eq!(speed.model, "gpt-5.6-sol");
-        assert_eq!(speed.effort, "medium");
-        assert_eq!(speed.valid_tasks, 112);
-        assert_eq!(recommendations.smart.unwrap().effort, "xhigh");
-    }
-
-    #[test]
-    fn keeps_untagged_daily_development_recommendations_unlabeled() {
-        let json = br#"{
-            "schema": 1,
-            "recommendations": [{
-                "key": "daily_development",
-                "items": [
-                    {
-                        "model": "gpt-5.5",
-                        "effort": "high",
-                        "iq": 95.09,
-                        "average_cost_usd": 3.663656,
-                        "samples": 112
-                    },
-                    {
-                        "model": "gpt-5.6-luna",
-                        "effort": "max",
-                        "iq": 95.09,
-                        "average_cost_usd": 0.47011,
-                        "samples": 112
-                    }
-                ]
-            }]
-        }"#;
-
-        let recommendations = parse_radar_recommendation(json).unwrap();
-
-        assert!(recommendations.speed.is_none());
-        assert!(recommendations.smart.is_none());
-        assert_eq!(recommendations.daily_development.len(), 2);
-        assert_eq!(recommendations.daily_development[0].model, "gpt-5.5");
-        assert_eq!(recommendations.daily_development[1].model, "gpt-5.6-luna");
-    }
-
-    #[test]
-    fn accepts_float_encoded_sample_counts_from_current_radar_insights() {
-        let json = br#"{
-            "schema": 1,
-            "recommendations": [{
-                "key": "daily_development",
-                "items": [
-                    {
-                        "model": "gpt-5.6-sol",
-                        "effort": "xhigh",
-                        "iq": 108.93,
-                        "passed": 305.0,
-                        "samples": 420.0,
-                        "average_cost_usd": 6.381834,
-                        "average_duration_minutes": 25.66,
-                        "duration_samples": 334,
-                        "combined_cost_index": 11331.908
-                    },
-                    {
-                        "model": "gpt-5.6-luna",
-                        "effort": "max",
-                        "iq": 93.57,
-                        "passed": 262.0,
-                        "samples": 420.0,
-                        "average_cost_usd": 0.474217,
-                        "average_duration_minutes": 32.43
-                    }
-                ]
-            }]
-        }"#;
-
-        let recommendations = parse_radar_recommendation(json).unwrap();
-
-        assert!(recommendations.speed.is_none());
-        assert!(recommendations.smart.is_none());
-        assert_eq!(recommendations.daily_development.len(), 2);
-        assert_eq!(recommendations.daily_development[0].valid_tasks, 420);
-        assert_eq!(recommendations.daily_development[1].model, "gpt-5.6-luna");
-    }
-
-    #[test]
-    fn falls_back_to_legacy_value_for_speed() {
-        let json = br#"{
-            "schema": 1,
-            "recommendations": [{
-                "key": "daily_development",
-                "items": [{
-                    "model": "gpt-5.6-sol",
-                    "effort": "high",
-                    "iq": 89.73,
-                    "average_cost_usd": 4.998,
-                    "samples": 112,
-                    "slot": "value"
-                }]
-            }]
-        }"#;
-
-        let recommendations = parse_radar_recommendation(json).unwrap();
-
-        assert_eq!(recommendations.speed.unwrap().effort, "high");
-        assert!(recommendations.smart.is_none());
-    }
-
-    #[test]
-    fn accepts_a_single_current_radar_slot() {
-        let json = br#"{
-            "schema": 1,
-            "recommendations": [{
-                "key": "daily_development",
-                "items": [{
-                    "model": "gpt-5.5",
-                    "effort": "xhigh",
-                    "iq": 100.45,
-                    "average_cost_usd": 5.737,
-                    "slot": "smart"
-                }]
-            }]
-        }"#;
-
-        let recommendations = parse_radar_recommendation(json).unwrap();
-
-        assert!(recommendations.speed.is_none());
-        assert_eq!(recommendations.smart.unwrap().model, "gpt-5.5");
-    }
-
-    #[test]
-    fn rejects_unsupported_or_incomplete_radar_data() {
-        let unsupported = br#"{"schema":2,"recommendations":[]}"#;
-        assert_eq!(
-            parse_radar_recommendation(unsupported),
-            Err(RadarDataError::UnsupportedSchema)
-        );
-
-        let missing_supported_slot =
-            br#"{"schema":1,"recommendations":[{"key":"daily_development","items":[]}]}"#;
-        assert_eq!(
-            parse_radar_recommendation(missing_supported_slot),
-            Err(RadarDataError::RecommendationUnavailable)
-        );
-    }
 
     struct FixturePoint<'a> {
         model: &'a str,

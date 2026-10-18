@@ -76,7 +76,8 @@ pub(super) fn run() {
         let install_channel = updater::current_install_channel();
         let now_unix = now_unix_secs();
         let radar_cache = crate::radar::load_cache(now_unix);
-        let radar_displaying_cached_data = radar_cache.has_any_data();
+        let radar_displaying_cached_data =
+            radar_cache.has_any_data() && !radar_cache.last_refresh_complete;
         let radar_status = if settings.codex_radar_enabled {
             if radar_cache.has_any_data() {
                 RadarStatus::Ready

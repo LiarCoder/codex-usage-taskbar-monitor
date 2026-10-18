@@ -442,26 +442,15 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
 
     let strings = app_state.language.strings();
     let cache = &app_state.radar.cache;
-    if !cache.has_any_data() {
+    let Some(computed) = cache.computed.as_ref() else {
         return if app_state.radar.status == RadarStatus::Loading {
             strings.radar_loading.to_string()
         } else {
             strings.radar_fetch_error.to_string()
         };
-    }
+    };
 
-    let oldest_update = [
-        cache.radar.as_ref().map(|source| source.validated_at_unix),
-        cache
-            .computed
-            .as_ref()
-            .map(|source| source.validated_at_unix),
-    ]
-    .into_iter()
-    .flatten()
-    .min()
-    .unwrap_or(now_unix);
-    let age = format_radar_age(now_unix.saturating_sub(oldest_update), strings);
+    let age = format_radar_age(now_unix.saturating_sub(computed.validated_at_unix), strings);
     let next_update_unix = now_unix.saturating_add(radar_data::next_due_in_secs(cache, now_unix));
     let next_update = native::format_local_date_time(
         std::time::UNIX_EPOCH + Duration::from_secs(next_update_unix),
@@ -469,84 +458,37 @@ fn format_radar_tooltip(app_state: &AppState, now_unix: u64) -> String {
     .unwrap_or_else(|| "--".to_string());
     let cached_warning = (app_state.radar.displaying_cached_data || !cache.last_refresh_complete)
         .then_some(strings.radar_cached_warning);
-    let mut lines = vec![format_radar_tooltip_header(
-        strings.radar_tooltip_header,
-        &age,
-        &next_update,
-        cached_warning,
-    )];
-
-    let radar = cache.radar.as_ref().map(|source| &source.value);
-    if let Some(recommendations) = radar {
-        let has_slot_recommendations =
-            recommendations.speed.is_some() || recommendations.smart.is_some();
-        if has_slot_recommendations {
-            lines.push(format_recommendation_line(
-                strings.radar_speed_recommendation,
-                recommendations.speed.as_ref(),
-                strings.radar_data_unavailable,
-                strings.minute_suffix,
-            ));
-            lines.push(format_recommendation_line(
-                strings.radar_smart_recommendation,
-                recommendations.smart.as_ref(),
-                strings.radar_data_unavailable,
-                strings.minute_suffix,
-            ));
-        }
-        if !recommendations.daily_development.is_empty() {
-            lines.push(format_recommendations_line(
-                strings.radar_community_daily,
-                &recommendations.daily_development,
-                strings.minute_suffix,
-            ));
-        }
-        if !has_slot_recommendations && recommendations.daily_development.is_empty() {
-            lines.push(format_unavailable_line(
-                strings.radar_speed_recommendation,
-                strings.radar_data_unavailable,
-            ));
-            lines.push(format_unavailable_line(
-                strings.radar_smart_recommendation,
-                strings.radar_data_unavailable,
-            ));
-        }
+    let radar_bench = computed.value.radar_bench;
+    let no_eligible = if radar_bench {
+        strings.radar_bench_no_eligible
     } else {
-        lines.push(format_unavailable_line(
-            strings.radar_speed_recommendation,
-            strings.radar_data_unavailable,
-        ));
-        lines.push(format_unavailable_line(
-            strings.radar_smart_recommendation,
-            strings.radar_data_unavailable,
-        ));
-    }
+        strings.radar_no_eligible
+    };
+    let metrics_template = radar_bench.then_some(strings.radar_bench_metrics);
 
-    if let Some(computed) = cache.computed.as_ref() {
-        lines.push(format_recommendation_line(
+    [
+        format_radar_tooltip_header(
+            strings.radar_tooltip_header,
+            &age,
+            &next_update,
+            cached_warning,
+        ),
+        format_recommendation_line(
             strings.radar_daily_recommendation,
             computed.value.daily.as_ref(),
-            strings.radar_no_eligible,
+            no_eligible,
             strings.minute_suffix,
-        ));
-        lines.push(format_recommendation_line(
+            metrics_template,
+        ),
+        format_recommendation_line(
             strings.radar_hard_problem,
             computed.value.hard_problem.as_ref(),
-            strings.radar_no_eligible,
+            no_eligible,
             strings.minute_suffix,
-        ));
-    } else {
-        lines.push(format_unavailable_line(
-            strings.radar_daily_recommendation,
-            strings.radar_data_unavailable,
-        ));
-        lines.push(format_unavailable_line(
-            strings.radar_hard_problem,
-            strings.radar_data_unavailable,
-        ));
-    }
-
-    lines.join("\r\n")
+            metrics_template,
+        ),
+    ]
+    .join("\r\n")
 }
 
 fn format_radar_tooltip_header(
@@ -577,36 +519,36 @@ fn format_recommendation_line(
     recommendation: Option<&Recommendation>,
     unavailable: &str,
     minute_suffix: &str,
+    metrics_template: Option<&str>,
 ) -> String {
     let Some(recommendation) = recommendation else {
         return format_unavailable_line(label, unavailable);
     };
     format!(
         "◆ {label}\r\n{}",
-        format_recommendation_value(recommendation, minute_suffix)
+        format_recommendation_value(recommendation, minute_suffix, metrics_template)
     )
 }
 
-fn format_recommendations_line(
-    label: &str,
-    recommendations: &[Recommendation],
+fn format_recommendation_value(
+    recommendation: &Recommendation,
     minute_suffix: &str,
+    metrics_template: Option<&str>,
 ) -> String {
-    let values = recommendations
-        .iter()
-        .map(|recommendation| format_recommendation_value(recommendation, minute_suffix))
-        .collect::<Vec<_>>()
-        .join("\r\n");
-    format!("◆ {label}\r\n{values}")
-}
-
-fn format_recommendation_value(recommendation: &Recommendation, minute_suffix: &str) -> String {
+    let metrics = if let Some(template) = metrics_template {
+        template
+            .replace("{score}", &format!("{:.1}", recommendation.iq))
+            .replace("{cost}", &format!("{:.2}", recommendation.average_cost_usd))
+    } else {
+        format!(
+            "IQ {:.1} · ${:.2}",
+            recommendation.iq, recommendation.average_cost_usd
+        )
+    };
     let mut value = format!(
-        "  【{} {}】 · IQ {:.1} · ${:.2}",
+        "  【{} {}】 · {metrics}",
         radar_data::model_display_name(&recommendation.model),
         recommendation.effort,
-        recommendation.iq,
-        recommendation.average_cost_usd
     );
     if let Some(average_minutes) = recommendation.average_minutes {
         value.push_str(&format!(" · {average_minutes:.1}{minute_suffix}"));
@@ -718,15 +660,6 @@ mod tests {
 
     fn full_cache() -> crate::radar::RadarCache {
         let mut cache = crate::radar::RadarCache::default();
-        cache.radar = Some(CachedSource {
-            value: crate::radar::RadarRecommendations {
-                speed: Some(recommendation("gpt-5.6-sol", "medium", 91.07, 3.742)),
-                smart: Some(recommendation("gpt-5.5", "xhigh", 100.45, 5.737)),
-                daily_development: Vec::new(),
-            },
-            validated_at_unix: 100,
-            validator: None,
-        });
         cache.computed = Some(CachedSource {
             value: crate::radar::ComputedRecommendations {
                 daily: Some(recommendation_with_metrics(
@@ -743,6 +676,7 @@ mod tests {
                     6.19,
                     30.0,
                 )),
+                radar_bench: false,
             },
             validated_at_unix: 100,
             validator: None,
@@ -791,8 +725,6 @@ mod tests {
             text.starts_with("CodexRadar · 三击任务栏组件可跳转网站\r\n12分前更新\r\n下次更新：")
         );
         assert!(!text.contains("非个性化社区推荐"));
-        assert!(text.contains("◆ 速度位\r\n  【Sol medium】 · IQ 91.1 · $3.74"));
-        assert!(text.contains("◆ 聪明位\r\n  【GPT-5.5 xhigh】 · IQ 100.5 · $5.74"));
         assert!(text.contains("◆ 日常推荐\r\n  【Terra max】 · IQ 93.8 · $4.70 · 20.0分"));
         assert!(text.contains("◆ 难题推荐\r\n  【Sol xhigh】 · IQ 105.8 · $6.19 · 30.0分"));
     }
@@ -811,56 +743,6 @@ mod tests {
         assert!(text.starts_with(
             "CodexRadar · 三击任务栏组件可跳转网站\r\n12分前更新 · 缓存数据，可能已过期\r\n下次更新："
         ));
-    }
-
-    #[test]
-    fn formats_untagged_radar_recommendations_as_community_daily() {
-        let mut cache = full_cache();
-        cache.radar.as_mut().unwrap().value = crate::radar::RadarRecommendations {
-            speed: None,
-            smart: None,
-            daily_development: vec![
-                recommendation("gpt-5.5", "high", 95.09, 3.663656),
-                recommendation("gpt-5.6-luna", "max", 95.09, 0.47011),
-            ],
-        };
-        let app_state = state(LanguageId::English, RadarStatus::Ready, cache);
-
-        let text = format_radar_tooltip(&app_state, 100 + 60);
-
-        assert!(text.contains(
-            "◆ Community daily\r\n  【GPT-5.5 high】 · IQ 95.1 · $3.66\r\n  【Luna max】 · IQ 95.1 · $0.47"
-        ));
-        assert!(!text.contains("◆ Speed"));
-        assert!(!text.contains("◆ Smart"));
-    }
-
-    #[test]
-    fn formats_partial_cached_english_tooltip() {
-        let mut cache = full_cache();
-        cache.computed = None;
-        cache.last_refresh_complete = false;
-        let app_state = state(LanguageId::English, RadarStatus::Ready, cache);
-
-        let text = format_radar_tooltip(&app_state, 100 + 60);
-
-        assert!(text.starts_with(
-            "CodexRadar · Triple-click the taskbar widget to open the website\r\nUpdated 1m ago · Cached data, may be outdated\r\nNext update: "
-        ));
-        assert!(text.contains("◆ Daily\r\n  Data temporarily unavailable"));
-        assert!(text.contains("◆ Hard problem\r\n  Data temporarily unavailable"));
-    }
-
-    #[test]
-    fn formats_missing_radar_slot_as_unavailable() {
-        let mut cache = full_cache();
-        cache.radar.as_mut().unwrap().value.smart = None;
-        let app_state = state(LanguageId::English, RadarStatus::Ready, cache);
-
-        let text = format_radar_tooltip(&app_state, 100 + 60);
-
-        assert!(text.contains("◆ Speed\r\n  【Sol medium】"));
-        assert!(text.contains("◆ Smart\r\n  Data temporarily unavailable"));
     }
 
     #[test]

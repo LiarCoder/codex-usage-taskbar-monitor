@@ -102,10 +102,7 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
     let send_hwnd = SendHwnd::from_hwnd(hwnd);
     std::thread::spawn(move || {
         let refresh = radar_data::fetch_recommendations(&validators);
-        if let Some(error) = refresh.radar.error() {
-            diagnose::log(format!("CodexRadar insights unavailable: {error}"));
-        }
-        if let Some(error) = refresh.computed.error() {
+        if let Some(error) = refresh.error() {
             diagnose::log(format!("CodexRadar efficiency data unavailable: {error}"));
         }
 
@@ -129,16 +126,8 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
             } else {
                 RadarStatus::Error
             };
-            let radar_model = app_state
-                .radar
-                .cache
-                .radar
-                .as_ref()
-                .and_then(|source| source.value.speed.as_ref().or(source.value.smart.as_ref()))
-                .map(|recommendation| radar_data::model_display_name(&recommendation.model))
-                .unwrap_or_else(|| "unavailable".to_string());
             diagnose::log(format!(
-                "CodexRadar refresh finished: complete={complete} radar={radar_model} computed={}",
+                "CodexRadar refresh finished: complete={complete} computed={}",
                 app_state.radar.cache.computed.is_some()
             ));
             app_state.radar.cache.clone()
