@@ -2,7 +2,7 @@
 
 # CodexRadar recommendations
 
-CodexRadar is an optional, experimental enhancement. Monitor uses public RadarBench scores to calculate non-personalized recommendations for model and reasoning-effort combinations. It is disabled by default and does not affect core usage monitoring.
+CodexRadar is an optional, experimental enhancement. Monitor uses public CodexRadar scores to calculate non-personalized recommendations for model and reasoning-effort combinations. It is disabled by default and does not affect core usage monitoring.
 
 ## Enable and use it
 
@@ -16,18 +16,18 @@ The tooltip shows Monitor's computed daily and hard-problem recommendations. The
 
 | Label | Selection method |
 | --- | --- |
-| Daily | Uses current public RadarBench summaries with all 64 tasks covered, Radar score ≥ 90, and valid cost and duration, then minimizes `relative price ^ 0.7 × relative time ^ 0.3`; Radar score breaks cost ties |
-| Hard problem | Keeps those combinations with mean API-equivalent cost ≤ $9 and duration ≤ 30 minutes; targets $8 and 30 minutes, choosing the higher Radar score when the gap reaches 10 points, otherwise choosing the lower daily cost |
+| Daily | Uses the latest completed four-task evaluation with all four scores available, Radar score ≥ 90, and valid cost and duration, then minimizes `relative price ^ 0.7 × relative time ^ 0.3`; Radar score breaks cost ties |
+| Hard problem | Keeps those combinations with total four-task API-equivalent estimate ≤ $9 and total duration ≤ 30 minutes; targets $8 and 30 minutes, choosing the higher Radar score when the gap reaches 10 points, otherwise choosing the lower daily cost |
 
-The application first reads the site's current public model and effort binding, then fetches public score summaries with at most three concurrent requests. Radar scores use the server's 0–150 results directly, without deriving a pass rate or applying the legacy IQ Wilson bound. Cost and duration are means of their known samples; missing values are not treated as zero. API-equivalent cost is not a subscription charge or an actual payment. Combinations without all 64 tasks covered or valid cost and duration are excluded.
+The application reads the site's public [four-task results JSON](https://codexradar.com/data/codex-four-task-results.json), accepting only completed publications using the `codex-four-weighted-150-v2` protocol. Combined, Pompeii, Pelican, and Candy contribute up to 60, 45, 22.5, and 22.5 points respectively, for a total of 150; the legacy IQ Wilson bound does not apply. Cost is the sum of the four API-equivalent estimates, and duration is the sum of the four model execution times, excluding judge execution time. These costs are not subscription charges or actual payments. Combinations missing any valid score, cost, or duration are excluded; missing values are not treated as zero. Results represent the latest completed evaluation round, without mixing in partial scores from a running round.
 
 If Monitor's current score API is unavailable, it falls back to the legacy raw efficiency endpoint. Legacy data displays IQ and uses the 95% Wilson lower bound as credible IQ for daily and hard-problem ranking. Archived static IQ snapshots are not used as current data. These results come from community data and are not filtered against models available to your account. A recommended combination might therefore be unavailable to you.
 
 ## Refresh, cache, and failures
 
 - After Monitor recommendations refresh successfully, data refreshes about once per hour; manual refresh has a 60-second cooldown
-- Only Monitor's derived recommendations, the score basis, cache times, and request validators are stored; complete responses are not retained verbatim. Failed configuration reads preserve valid cached data and schedule a retry
-- Upgrades migrate the old cache, keeping unexpired Monitor recommendations, dropping site recommendations, and clearing the old failure backoff before an immediate startup refresh
+- Only Monitor's derived recommendations, the score basis, cache times, and request validators are stored; complete responses are not retained verbatim. ETag conditional requests are supported, and failed fetches or validation preserve valid cached data and schedule a retry
+- Migration to the four-task source clears recommendations using the old score basis, request validators, and failure backoff before an immediate startup refresh
 - Cached data is kept for up to 24 hours; failed refreshes mark it as potentially stale and use progressively longer retry intervals
 - CodexRadar failures, stale data, or incompatible response formats do not stop core Codex usage polling
 

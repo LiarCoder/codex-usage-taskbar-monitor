@@ -11,6 +11,7 @@ static HTTP_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FetchValidators {
+    pub(crate) four_task_etag: Option<String>,
     pub(crate) efficiency_etag: Option<String>,
 }
 
@@ -38,19 +39,16 @@ pub(crate) fn fetch_recommendations(
         Err(message) => return SourceUpdate::Failed(message),
     };
 
-    match super::bench::fetch_recommendations(agent) {
-        Ok(value) => SourceUpdate::Updated {
-            value,
-            validator: None,
-        },
-        Err(bench_error) => {
+    match super::bench::fetch_recommendations(agent, validators.four_task_etag.as_deref()) {
+        SourceUpdate::Failed(four_task_error) => {
             let mut update =
                 fetch_computed_recommendations(agent, validators.efficiency_etag.as_deref());
             if let SourceUpdate::Failed(error) = &mut update {
-                *error = format!("RadarBench unavailable: {bench_error}; {error}");
+                *error = format!("Four-task results unavailable: {four_task_error}; {error}");
             }
             update
         }
+        update => update,
     }
 }
 

@@ -103,7 +103,9 @@ pub(super) fn begin_radar_refresh(hwnd: HWND, manual: bool) -> bool {
     std::thread::spawn(move || {
         let refresh = radar_data::fetch_recommendations(&validators);
         if let Some(error) = refresh.error() {
-            diagnose::log(format!("CodexRadar efficiency data unavailable: {error}"));
+            diagnose::log(format!(
+                "CodexRadar recommendation data unavailable: {error}"
+            ));
         }
 
         let completed_at = now_unix_secs();

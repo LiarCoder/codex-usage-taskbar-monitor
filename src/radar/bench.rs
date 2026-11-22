@@ -2,130 +2,161 @@ use serde::Deserialize;
 
 use super::client::{base_request, call, HttpResponse};
 use super::{
-    rank_candidates, recommendation_from_parts, ComputedRecommendations, Recommendation,
+    rank_candidates, recommendation_from_parts, ComputedRecommendations, SourceUpdate,
     MIN_RECOMMENDED_IQ,
 };
 
-const BINDING_URL: &str = "https://codexradar.com/data/radar-bench-binding.json";
-const SUMMARY_URL: &str = "https://codexradar.com/api/radar-bench-score";
-const SCORE_VERSION: &str = "radar-bench-v2-150";
-const SUMMARY_SCHEMA: &str = "radar-bench-public-summary-v6-150-details";
-const MAX_RESPONSE_BYTES: usize = 128 * 1024;
-const MAX_SELECTIONS: usize = 64;
-const CONCURRENCY: usize = 3;
+const RESULTS_URL: &str = "https://codexradar.com/data/codex-four-task-results.json";
+const RESULTS_SCHEMA: &str = "codex-four-task-results/1";
+const SCORE_PROTOCOL: &str = "codex-four-weighted-150-v2";
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Deserialize)]
-struct Binding {
-    enabled: bool,
-    interface_confirmed: bool,
-    production_read_verified: bool,
-    score_version: String,
-    score_max: u32,
-    total_tasks: u32,
-    benchmark: String,
-    catalog_version: String,
-    task_set_sha256: String,
-    model_efforts: Vec<Selection>,
-}
-
-#[derive(Deserialize)]
-struct Selection {
-    model: String,
-    effort: String,
-}
-
-#[derive(Deserialize)]
-struct Summary {
+struct Results {
     schema: String,
-    score_version: String,
+    protocol: String,
     score_max: u32,
-    benchmark: String,
-    catalog_version: String,
-    task_set_sha256: String,
+    task_weights: TaskWeights,
+    publication_status: String,
+    all_graded: bool,
+    expected: usize,
+    graded: usize,
+    configurations: usize,
+    rows: Vec<Row>,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct TaskWeights {
+    combined: f64,
+    pompeii: f64,
+    pelican: f64,
+    candy: f64,
+}
+
+#[derive(Deserialize)]
+struct Row {
     model: String,
     effort: String,
+    combined: Option<TaskResult>,
+    pompeii: Option<TaskResult>,
+    pelican: Option<TaskResult>,
+    candy: Option<TaskResult>,
+}
+
+#[derive(Deserialize)]
+struct TaskResult {
     score: Option<f64>,
-    coverage: u32,
-    required_tasks: u32,
-    score_status: String,
-    statistics_state: String,
-    statistics: Option<Statistics>,
-}
-
-#[derive(Deserialize)]
-struct Statistics {
-    sample_count: u32,
-    cost_basis: String,
-    metrics: Metrics,
-}
-
-#[derive(Deserialize)]
-struct Metrics {
-    api_equivalent_usd: Metric,
-    elapsed_ms: Metric,
-}
-
-#[derive(Deserialize)]
-struct Metric {
-    known_total: Option<f64>,
-    known_samples: u32,
-    missing_samples: u32,
-}
-
-impl Metric {
-    fn mean(&self, sample_count: u32) -> Option<f64> {
-        if self.known_samples == 0
-            || self.known_samples.checked_add(self.missing_samples) != Some(sample_count)
-        {
-            return None;
-        }
-        let mean = self.known_total? / f64::from(self.known_samples);
-        (mean.is_finite() && mean > 0.0).then_some(mean)
-    }
+    reward: Option<f64>,
+    correct: Option<bool>,
+    cost_kind: Option<String>,
+    cost_usd: Option<f64>,
+    model_elapsed_seconds: Option<f64>,
 }
 
 pub(super) fn fetch_recommendations(
     agent: &ureq::Agent,
-) -> Result<ComputedRecommendations, String> {
-    let binding: Binding = read_json(base_request(agent, BINDING_URL))?;
-    if !binding.enabled
-        || !binding.interface_confirmed
-        || !binding.production_read_verified
-        || binding.score_version != SCORE_VERSION
-        || binding.score_max != 150
-        || binding.total_tasks != 64
-        || binding.model_efforts.is_empty()
-        || binding.model_efforts.len() > MAX_SELECTIONS
+    etag: Option<&str>,
+) -> SourceUpdate<ComputedRecommendations> {
+    let mut request = base_request(agent, RESULTS_URL);
+    if let Some(etag) = etag {
+        request = request.set("If-None-Match", etag);
+    }
+    match call(request, MAX_RESPONSE_BYTES, "ETag") {
+        Ok(HttpResponse::NotModified) => SourceUpdate::NotModified,
+        Ok(HttpResponse::Body { bytes, validator }) => match parse_recommendations(&bytes) {
+            Ok(value) => SourceUpdate::Updated { value, validator },
+            Err(error) => SourceUpdate::Failed(error),
+        },
+        Err(error) => SourceUpdate::Failed(format!("four-task request failed: {error}")),
+    }
+}
+
+pub(super) fn parse_recommendations(bytes: &[u8]) -> Result<ComputedRecommendations, String> {
+    let results: Results = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid four-task JSON: {error}"))?;
+    let weights = TaskWeights {
+        combined: 60.0,
+        pompeii: 45.0,
+        pelican: 22.5,
+        candy: 22.5,
+    };
+    if results.schema != RESULTS_SCHEMA
+        || results.protocol != SCORE_PROTOCOL
+        || results.score_max != 150
+        || results.task_weights != weights
+        || results.publication_status != "complete"
+        || !results.all_graded
+        || results.rows.is_empty()
+        || results.configurations != results.rows.len()
+        || results.configurations.checked_mul(4) != Some(results.expected)
+        || results.graded != results.expected
     {
-        return Err("unsupported RadarBench binding".to_string());
+        return Err("incompatible or incomplete four-task results".to_string());
     }
 
     let mut candidates = Vec::new();
-    let mut first_error = None;
-    // Match the site's bounded read concurrency without requesting task records
-    for selections in binding.model_efforts.chunks(CONCURRENCY) {
-        std::thread::scope(|scope| {
-            let requests = selections
-                .iter()
-                .map(|selection| scope.spawn(|| fetch_candidate(agent, &binding, selection)))
-                .collect::<Vec<_>>();
-            for request in requests {
-                match request.join() {
-                    Ok(Ok(candidate)) => {
-                        candidates.extend(candidate);
-                    }
-                    Ok(Err(error)) => {
-                        first_error.get_or_insert(error);
-                    }
-                    Err(_) => {
-                        first_error.get_or_insert_with(|| "RadarBench worker failed".to_string());
-                    }
-                }
+    let mut complete_points = 0;
+    for row in results.rows {
+        let (Some(combined), Some(pompeii), Some(pelican), Some(candy)) =
+            (&row.combined, &row.pompeii, &row.pelican, &row.candy)
+        else {
+            continue;
+        };
+        let (Some(combined_score), Some(pompeii_score), Some(pelican_score), Some(correct)) =
+            (combined.score, pompeii.reward, pelican.score, candy.correct)
+        else {
+            continue;
+        };
+        if !valid_score(combined_score, 100.0)
+            || !valid_score(pompeii_score, 1.0)
+            || !valid_score(pelican_score, 100.0)
+        {
+            continue;
+        }
+        let score = combined_score / 100.0 * weights.combined
+            + pompeii_score * weights.pompeii
+            + pelican_score / 100.0 * weights.pelican
+            + if correct { weights.candy } else { 0.0 };
+        let mut cost = 0.0;
+        let mut seconds = 0.0;
+        let mut valid_metrics = true;
+        for task in [combined, pompeii, pelican, candy] {
+            let (Some(task_cost), Some(task_seconds)) = (task.cost_usd, task.model_elapsed_seconds)
+            else {
+                valid_metrics = false;
+                break;
+            };
+            if task.cost_kind.as_deref() != Some("api_equivalent_estimate")
+                || !task_cost.is_finite()
+                || task_cost < 0.0
+                || !task_seconds.is_finite()
+                || task_seconds <= 0.0
+            {
+                valid_metrics = false;
+                break;
             }
-        });
+            cost += task_cost;
+            seconds += task_seconds;
+        }
+        if !valid_metrics || !seconds.is_finite() || seconds <= 0.0 {
+            continue;
+        }
+        let Some(mut candidate) = recommendation_from_parts(row.model, row.effort, score, cost, 4)
+        else {
+            continue;
+        };
+        complete_points += 1;
+        if score < MIN_RECOMMENDED_IQ {
+            continue;
+        }
+        // Keep the four-task total score separate from legacy pass-rate confidence bounds
+        candidate.average_minutes = Some(seconds / 60.0);
+        candidates.push(candidate);
     }
-    if let Some(error) = first_error {
-        return Err(error);
+    if complete_points == 0 {
+        return Err(
+            "four-task results contain no complete scores with valid cost and duration".to_string(),
+        );
     }
 
     let mut computed = rank_candidates(&candidates);
@@ -133,91 +164,6 @@ pub(super) fn fetch_recommendations(
     Ok(computed)
 }
 
-fn fetch_candidate(
-    agent: &ureq::Agent,
-    binding: &Binding,
-    selection: &Selection,
-) -> Result<Option<Recommendation>, String> {
-    let request = base_request(agent, SUMMARY_URL)
-        .set("X-Radar-Bench-Selection", "user-selected-v1")
-        .query("model", &selection.model)
-        .query("effort", &selection.effort)
-        .query("view", "summary");
-    let summary: Summary = read_json(request)
-        .map_err(|error| format!("{} {}: {error}", selection.model, selection.effort))?;
-    if summary.schema != SUMMARY_SCHEMA
-        || summary.score_version != SCORE_VERSION
-        || summary.score_max != binding.score_max
-        || summary.benchmark != binding.benchmark
-        || summary.catalog_version != binding.catalog_version
-        || summary.task_set_sha256 != binding.task_set_sha256
-        || summary.model != selection.model
-        || summary.effort != selection.effort
-        || summary.required_tasks != binding.total_tasks
-        || summary.coverage > binding.total_tasks
-        || summary.score_status
-            != match summary.coverage {
-                0 => "missing_current_result",
-                coverage if coverage == binding.total_tasks => "complete",
-                _ => "provisional",
-            }
-        || match summary.score {
-            Some(score) => {
-                summary.coverage == 0 || !score.is_finite() || !(0.0..=150.0).contains(&score)
-            }
-            None => summary.coverage != 0,
-        }
-    {
-        return Err("incompatible RadarBench summary".to_string());
-    }
-    if summary.coverage != binding.total_tasks
-        || summary.score.is_none_or(|score| score < MIN_RECOMMENDED_IQ)
-        || summary.statistics_state != "available"
-    {
-        return Ok(None);
-    }
-    let Some(statistics) = summary.statistics else {
-        return Ok(None);
-    };
-    if statistics.cost_basis
-        != "official_standard_api_equivalent; no estimates or claimed cash charges"
-    {
-        return Ok(None);
-    }
-    let Some(cost) = statistics
-        .metrics
-        .api_equivalent_usd
-        .mean(statistics.sample_count)
-    else {
-        return Ok(None);
-    };
-    let Some(minutes) = statistics
-        .metrics
-        .elapsed_ms
-        .mean(statistics.sample_count)
-        .map(|ms| ms / 60_000.0)
-    else {
-        return Ok(None);
-    };
-    let Some(mut candidate) = recommendation_from_parts(
-        summary.model,
-        summary.effort,
-        summary.score.unwrap(),
-        cost,
-        summary.coverage,
-    ) else {
-        return Ok(None);
-    };
-    candidate.average_minutes = Some(minutes);
-    Ok(Some(candidate))
-}
-
-fn read_json<T: serde::de::DeserializeOwned>(request: ureq::Request) -> Result<T, String> {
-    match call(request, MAX_RESPONSE_BYTES, "ETag")? {
-        HttpResponse::Body { bytes, .. } => serde_json::from_slice(&bytes)
-            .map_err(|error| format!("invalid RadarBench JSON: {error}")),
-        HttpResponse::NotModified => {
-            Err("RadarBench returned 304 without a cached summary".to_string())
-        }
-    }
+fn valid_score(score: f64, maximum: f64) -> bool {
+    score.is_finite() && (0.0..=maximum).contains(&score)
 }

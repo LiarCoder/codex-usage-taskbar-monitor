@@ -58,6 +58,6 @@ pub(super) const STRINGS: Strings = Strings {
     radar_loading: "Fetching CodexRadar recommendations...",
     radar_fetch_error: "Unable to fetch CodexRadar recommendations",
     radar_no_eligible: "No combination with IQ ≥ 90",
-    radar_bench_metrics: "Radar score {score} · Mean API equivalent ${cost}",
-    radar_bench_no_eligible: "No fully scored combination with Radar score ≥ 90",
+    radar_bench_metrics: "Radar score {score} · Four-task API estimate ${cost}",
+    radar_bench_no_eligible: "No fully scored four-task combination with Radar score ≥ 90",
 };
