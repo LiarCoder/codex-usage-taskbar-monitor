@@ -231,6 +231,9 @@ fn aggregate_efficiency_point(
 
 pub(crate) fn model_display_name(model: &str) -> String {
     match model {
+        "gpt-6.2-sol" => "GPT-6.2 Sol".to_string(),
+        "gpt-6.2-astra" => "GPT-6.2 Astra".to_string(),
+        "gpt-6.1-terra" => "GPT-6.1 Terra".to_string(),
         "gpt-6-astra" => "GPT-6 Astra".to_string(),
         "gpt-6.1-sol" => "GPT-6.1 Sol".to_string(),
         "gpt-6-sol" => "GPT-6 Sol".to_string(),

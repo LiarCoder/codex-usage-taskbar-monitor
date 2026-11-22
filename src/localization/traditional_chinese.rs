@@ -58,6 +58,6 @@ pub(super) const STRINGS: Strings = Strings {
     radar_loading: "正在取得雷達推薦資料...",
     radar_fetch_error: "雷達推薦資料取得異常",
     radar_no_eligible: "暫無符合 IQ ≥ 90 的組合",
-    radar_bench_metrics: "雷達分 {score} · API 等價均值 ${cost}",
-    radar_bench_no_eligible: "暫無完整評分且雷達分 ≥ 90 的組合",
+    radar_bench_metrics: "雷達分 {score} · 四題 API 等價估算 ${cost}",
+    radar_bench_no_eligible: "暫無完整四題評分且雷達分 ≥ 90 的組合",
 };

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{ComputedRecommendations, FetchValidators, SourceUpdate};
 
-const CACHE_SCHEMA: u32 = 2;
+const CACHE_SCHEMA: u32 = 3;
 pub(crate) const CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 pub(crate) const FULL_REFRESH_INTERVAL_SECS: u64 = 60 * 60;
 pub(crate) const MANUAL_REFRESH_COOLDOWN_SECS: u64 = 60;
@@ -53,12 +53,15 @@ impl RadarCache {
     }
 
     pub(crate) fn validators(&self) -> FetchValidators {
-        FetchValidators {
-            efficiency_etag: self
-                .computed
-                .as_ref()
-                .and_then(|source| source.validator.clone()),
+        let mut validators = FetchValidators::default();
+        if let Some(source) = &self.computed {
+            if source.value.radar_bench {
+                validators.four_task_etag = source.validator.clone();
+            } else {
+                validators.efficiency_etag = source.validator.clone();
+            }
         }
+        validators
     }
 
     pub(crate) fn prune_stale(&mut self, now_unix: u64) {
@@ -123,8 +126,10 @@ pub(crate) fn next_due_in_secs(cache: &RadarCache, now_unix: u64) -> u64 {
 
 fn parse_cache(bytes: &[u8], now_unix: u64) -> Option<RadarCache> {
     let mut cache: RadarCache = serde_json::from_slice(bytes).ok()?;
-    if cache.schema == 1 {
+    if matches!(cache.schema, 1 | 2) {
         cache.schema = CACHE_SCHEMA;
+        // Old recommendation metrics and validators belong to different data sources
+        cache.computed = None;
         cache.last_attempt_unix = None;
         cache.last_complete_success_unix = None;
         cache.retry_count = 0;
@@ -267,13 +272,13 @@ mod tests {
     #[test]
     fn ignores_corrupt_and_unknown_cache_schemas() {
         assert!(parse_cache(b"not json", 100).is_none());
-        assert!(parse_cache(br#"{"schema":3}"#, 100).is_none());
+        assert!(parse_cache(br#"{"schema":4}"#, 100).is_none());
     }
 
     #[test]
-    fn migrates_legacy_cache_and_clears_site_failure_backoff() {
+    fn migrates_legacy_cache_and_clears_obsolete_data_and_backoff() {
         let json = serde_json::to_vec(&serde_json::json!({
-            "schema": 1,
+            "schema": 2,
             "radar": { "value": { "speed": recommendation("site") }, "validated_at_unix": 100 },
             "computed": { "value": computed(), "validated_at_unix": 100 },
             "last_attempt_unix": 100,
@@ -285,14 +290,14 @@ mod tests {
         let cache = parse_cache(&json, 101).unwrap();
 
         assert_eq!(cache.schema, CACHE_SCHEMA);
-        assert_eq!(cache.computed.as_ref().unwrap().value, computed());
+        assert!(cache.computed.is_none());
         assert_eq!(cache.retry_count, 0);
         assert_eq!(next_due_in_secs(&cache, 101), 0);
         assert!(serde_json::to_value(&cache).unwrap().get("radar").is_none());
     }
 
     #[test]
-    fn keeps_old_computed_cache_without_inventing_daily_metrics() {
+    fn discards_old_computed_cache_without_current_metrics() {
         let json = br#"{
             "schema": 1,
             "computed": {
@@ -310,10 +315,7 @@ mod tests {
         }"#;
 
         let cache = parse_cache(json, 100).unwrap();
-        let computed = cache.computed.unwrap().value;
-
-        assert!(computed.daily.is_none());
-        assert!(computed.hard_problem.is_none());
+        assert!(cache.computed.is_none());
     }
 
     #[test]
